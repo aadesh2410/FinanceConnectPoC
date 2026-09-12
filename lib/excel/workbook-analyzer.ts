@@ -53,6 +53,7 @@ export async function analyzeWorkbook(buffer: Buffer, fileName: string): Promise
     fileName,
     fileSize: workbookData.fileSize,
     sheets: analyzedSheets,
+    namedRanges: workbookData.namedRanges,
   }
 
   return { analysis, summary }

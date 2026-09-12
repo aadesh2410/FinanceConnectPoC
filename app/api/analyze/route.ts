@@ -6,7 +6,7 @@ import { saveJob } from '@/lib/jobs/job-store'
 import { Job, AuditEvent } from '@/lib/schema/types'
 
 export const runtime = 'nodejs'
-export const maxDuration = 60
+export const maxDuration = 120
 
 export async function POST(req: NextRequest) {
   try {
@@ -43,6 +43,7 @@ export async function POST(req: NextRequest) {
     })
 
     // Infer schema
+    console.log('[analyze] AI_MODE =', process.env.AI_MODE, '| ANTHROPIC_API_KEY set =', !!process.env.ANTHROPIC_API_KEY)
     const provider = getSchemaInferenceProvider()
     const proposedSchema = await provider.inferSchema(analysis)
 

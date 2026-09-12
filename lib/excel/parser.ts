@@ -7,6 +7,14 @@ export interface CellData {
   formula?: string
   type: 'string' | 'number' | 'boolean' | 'date' | 'formula' | 'empty'
   isDate?: boolean
+  numFmt?: string
+  comment?: string
+}
+
+export interface NamedRange {
+  name: string
+  sheet: string
+  range: string
 }
 
 export interface MergedCellInfo {
@@ -28,6 +36,7 @@ export interface WorkbookData {
   fileName: string
   fileSize: number
   sheets: SheetData[]
+  namedRanges: NamedRange[]
 }
 
 export async function parseWorkbook(buffer: Buffer, fileName: string): Promise<WorkbookData> {
@@ -90,8 +99,23 @@ export async function parseWorkbook(buffer: Buffer, fileName: string): Promise<W
           else type = 'empty'
         }
 
+        const numFmt = (cell.numFmt && cell.numFmt !== 'General' && cell.numFmt !== '@')
+          ? cell.numFmt
+          : undefined
+
+        let comment: string | undefined
+        if (cell.note) {
+          if (typeof cell.note === 'string') {
+            comment = cell.note || undefined
+          } else if (typeof cell.note === 'object' && 'texts' in (cell.note as object)) {
+            const noteObj = cell.note as { texts: { text: string }[] }
+            const joined = noteObj.texts?.map((t) => t.text).join('') ?? ''
+            comment = joined || undefined
+          }
+        }
+
         if (value !== null && value !== undefined) {
-          cells.push({ row: rowNumber, col: colNumber, value, formula, type, isDate })
+          cells.push({ row: rowNumber, col: colNumber, value, formula, type, isDate, numFmt, comment })
         }
       })
     })
@@ -105,9 +129,23 @@ export async function parseWorkbook(buffer: Buffer, fileName: string): Promise<W
     })
   })
 
+  const namedRanges: NamedRange[] = []
+  const dnModel = workbook.definedNames?.model as { name: string; ranges: string[] }[] | undefined
+  if (dnModel) {
+    for (const dn of dnModel) {
+      for (const range of dn.ranges ?? []) {
+        const match = range.match(/^'?([^'!]+)'?!(.+)$/)
+        if (match) {
+          namedRanges.push({ name: dn.name, sheet: match[1], range: match[2].replace(/\$/g, '') })
+        }
+      }
+    }
+  }
+
   return {
     fileName,
     fileSize: buffer.length,
     sheets,
+    namedRanges,
   }
 }

@@ -15,6 +15,7 @@ export interface AnalyzedSheet extends SheetData {
   regions: DetectedRegion[]
   primaryDataRegion: DetectedRegion | null
   headerRow: number | null
+  headerRows: number[]
 }
 
 function getRowCells(cells: CellData[], row: number): CellData[] {
@@ -38,7 +39,7 @@ export function analyzeSheet(sheet: SheetData): AnalyzedSheet {
 
   const allRows = Array.from(new Set(sheet.cells.map((c) => c.row))).sort((a, b) => a - b)
   if (allRows.length === 0) {
-    return { ...sheet, regions: [], primaryDataRegion: null, headerRow: null }
+    return { ...sheet, regions: [], primaryDataRegion: null, headerRow: null, headerRows: [] }
   }
 
   const minCol = Math.min(...sheet.cells.map((c) => c.col))
@@ -120,7 +121,19 @@ export function analyzeSheet(sheet: SheetData): AnalyzedSheet {
     }
     regions.push(dataRegion)
 
-    return { ...sheet, regions, primaryDataRegion: dataRegion, headerRow }
+    // Detect multi-level headers: look for additional string-dominant rows immediately before headerRow
+    const headerRows: number[] = []
+    if (headerRow !== null) {
+      const precedingRows = allRows.filter((r) => r < headerRow && r >= headerRow - 3).reverse()
+      for (const r of precedingRows) {
+        const rc = getRowCells(sheet.cells, r)
+        if (isStringDominant(rc) && rc.length >= 3) headerRows.unshift(r)
+        else break
+      }
+      headerRows.push(headerRow)
+    }
+
+    return { ...sheet, regions, primaryDataRegion: dataRegion, headerRow, headerRows }
   }
 
   // Fallback: treat all non-title/meta rows as data
@@ -135,8 +148,8 @@ export function analyzeSheet(sheet: SheetData): AnalyzedSheet {
       confidence: 0.5,
     }
     regions.push(fallbackRegion)
-    return { ...sheet, regions, primaryDataRegion: fallbackRegion, headerRow: null }
+    return { ...sheet, regions, primaryDataRegion: fallbackRegion, headerRow: null, headerRows: [] }
   }
 
-  return { ...sheet, regions, primaryDataRegion: null, headerRow: null }
+  return { ...sheet, regions, primaryDataRegion: null, headerRow: null, headerRows: [] }
 }
