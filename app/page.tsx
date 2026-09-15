@@ -1,7 +1,7 @@
 'use client'
 import { useState, useRef, useCallback } from 'react'
 import { useRouter } from 'next/navigation'
-import { Upload, FileSpreadsheet, Loader2, AlertCircle } from 'lucide-react'
+import { Upload, FileSpreadsheet, Loader2, AlertCircle, Info } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { Card } from '@/components/ui/card'
 import { Badge } from '@/components/ui/badge'
@@ -14,6 +14,12 @@ export default function HomePage() {
   const [dragging, setDragging] = useState(false)
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState<string | null>(null)
+  const [duplicateBanner, setDuplicateBanner] = useState<{
+    hasChanges: boolean
+    changedTableCount: number
+    previousJobId: string
+    newJobId: string
+  } | null>(null)
   const inputRef = useRef<HTMLInputElement>(null)
 
   const handleFile = (f: File) => {
@@ -41,12 +47,25 @@ export default function HomePage() {
     if (!file) return
     setLoading(true)
     setError(null)
+    setDuplicateBanner(null)
     try {
       const form = new FormData()
       form.append('file', file)
       const res = await fetch('/api/analyze', { method: 'POST', body: form })
       const data = await res.json()
       if (!res.ok) throw new Error(data.error ?? 'Analysis failed')
+      if (data.duplicate) {
+        setDuplicateBanner({
+          hasChanges: data.schemaDiff?.hasChanges ?? false,
+          changedTableCount: data.schemaDiff?.tables?.length ?? 0,
+          previousJobId: data.previousJobId,
+          newJobId: data.jobId,
+        })
+        setLoading(false)
+        // Still navigate after a short pause so user sees the banner
+        setTimeout(() => router.push(`/jobs/${data.jobId}`), 2500)
+        return
+      }
       router.push(`/jobs/${data.jobId}`)
     } catch (e) {
       setError(e instanceof Error ? e.message : 'Analysis failed')
@@ -118,6 +137,28 @@ export default function HomePage() {
 
           {/* Live step-by-step progress while /api/analyze is in flight */}
           <AnalyzeProgress active={loading} />
+
+          {duplicateBanner && !duplicateBanner.hasChanges && (
+            <div className="flex items-start gap-2 p-3 rounded-md border border-blue-200 bg-blue-50">
+              <Info className="w-4 h-4 text-blue-600 flex-shrink-0 mt-0.5" />
+              <p className="text-sm text-blue-700">
+                This workbook is already registered — no schema changes detected.{' '}
+                <a href={`/jobs/${duplicateBanner.previousJobId}`} className="underline font-medium">
+                  View existing job?
+                </a>{' '}
+                (Redirecting to new job…)
+              </p>
+            </div>
+          )}
+
+          {duplicateBanner && duplicateBanner.hasChanges && (
+            <div className="flex items-start gap-2 p-3 rounded-md border border-amber-200 bg-amber-50">
+              <AlertCircle className="w-4 h-4 text-amber-600 flex-shrink-0 mt-0.5" />
+              <p className="text-sm text-amber-700">
+                Schema drift detected — {duplicateBanner.changedTableCount} table(s) changed. Continuing to review with diff highlighted. (Redirecting…)
+              </p>
+            </div>
+          )}
 
           {error && (
             <div className="flex items-start gap-2 p-3 rounded-md border border-red-200 bg-red-50">

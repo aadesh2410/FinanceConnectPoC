@@ -96,6 +96,91 @@ export async function executeDDL(ddlScript: string): Promise<string[]> {
   return executed
 }
 
+function snowflakeTypeCast(dataType: string): string {
+  switch (dataType) {
+    case 'NUMBER': return 'NUMBER'
+    case 'INTEGER': return 'INTEGER'
+    case 'FLOAT': return 'FLOAT'
+    case 'BOOLEAN': return 'BOOLEAN'
+    case 'DATE': return 'DATE'
+    case 'TIMESTAMP': return 'TIMESTAMP'
+    default: return 'VARCHAR'
+  }
+}
+
+export async function upsertRows(
+  tableName: string,
+  columns: Array<{ name: string; dataType: string; isPrimaryKey?: boolean }>,
+  rows: Array<Record<string, string>>,
+  sourceColumnToSnowflake: Record<string, string>
+): Promise<number> {
+  if (rows.length === 0) return 0
+  const cfg = getConfig()
+  const conn = createConnection(cfg)
+  await connectAsync(conn)
+
+  const sfCols = columns.filter((c) => c.name)
+  const pkCol = sfCols.find((c) => c.isPrimaryKey) ?? sfCols[0]
+
+  const BATCH_SIZE = 500
+  let totalUpserted = 0
+
+  try {
+    await executeAsync(conn, `USE DATABASE ${cfg.database};`)
+    await executeAsync(conn, `USE SCHEMA ${cfg.schema};`)
+
+    for (let i = 0; i < rows.length; i += BATCH_SIZE) {
+      const batch = rows.slice(i, i + BATCH_SIZE)
+
+      const valueRows = batch
+        .map((row) => {
+          const vals = sfCols.map((col) => {
+            const srcHeader = Object.entries(sourceColumnToSnowflake).find(
+              ([, sfName]) => sfName === col.name
+            )?.[0]
+            const raw = srcHeader ? (row[srcHeader] ?? '') : ''
+            const escaped = String(raw).replace(/'/g, "''")
+            return `'${escaped}'`
+          })
+          return `(${vals.join(', ')})`
+        })
+        .join(',\n  ')
+
+      const selectCols = sfCols
+        .map((col, idx) => {
+          const cast = snowflakeTypeCast(col.dataType)
+          return `TRY_CAST($${idx + 1} AS ${cast}) AS ${col.name}`
+        })
+        .join(', ')
+
+      const updateSet = sfCols
+        .filter((c) => c.name !== pkCol.name)
+        .map((c) => `t.${c.name} = s.${c.name}`)
+        .join(', ')
+
+      const insertCols = sfCols.map((c) => c.name).join(', ')
+      const insertVals = sfCols.map((c) => `s.${c.name}`).join(', ')
+
+      const mergeSql = `
+MERGE INTO ${tableName} AS t
+USING (
+  SELECT ${selectCols}
+  FROM VALUES
+  ${valueRows}
+) AS s ON t.${pkCol.name} = s.${pkCol.name}
+${updateSet ? `WHEN MATCHED THEN UPDATE SET ${updateSet}` : ''}
+WHEN NOT MATCHED THEN INSERT (${insertCols}) VALUES (${insertVals});`
+
+      await executeAsync(conn, mergeSql)
+      totalUpserted += batch.length
+    }
+  } finally {
+    await destroyAsync(conn)
+  }
+
+  return totalUpserted
+}
+
 export function isSnowflakeConfigured(): boolean {
   return !!(
     process.env.SNOWFLAKE_ACCOUNT &&

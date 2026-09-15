@@ -17,6 +17,9 @@ export async function saveJob(job: Job): Promise<void> {
   const redis = await getRedis()
   if (redis) {
     await redis.set(`job:${job.jobId}`, JSON.stringify(job), { ex: 86400 })
+    if (job.workbookHash) {
+      await redis.set(`workbook-hash:${job.workbookHash}`, job.jobId, { ex: 86400 })
+    }
   } else {
     memStore.set(job.jobId, job)
   }
@@ -38,4 +41,17 @@ export async function updateJob(jobId: string, updates: Partial<Job>): Promise<J
   const updated = { ...job, ...updates }
   await saveJob(updated)
   return updated
+}
+
+export async function findJobByHash(hash: string): Promise<Job | null> {
+  const redis = await getRedis()
+  if (redis) {
+    const jobId = await redis.get<string>(`workbook-hash:${hash}`)
+    if (!jobId) return null
+    return getJob(jobId)
+  }
+  for (const job of Array.from(memStore.values())) {
+    if (job.workbookHash === hash) return job
+  }
+  return null
 }

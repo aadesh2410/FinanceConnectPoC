@@ -1,7 +1,7 @@
 'use client'
 import { useEffect, useState, useCallback } from 'react'
 import { useParams, useRouter } from 'next/navigation'
-import { ArrowRight, Loader2, AlertTriangle, Trash2, Pencil, Check, X } from 'lucide-react'
+import { ArrowRight, Loader2, AlertTriangle, Trash2, Pencil, Check, X, Key } from 'lucide-react'
 import { PageHeader } from '@/components/common/PageHeader'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
@@ -64,6 +64,9 @@ export default function ReviewPage() {
   const [showSql, setShowSql] = useState(false)
   const [approving, setApproving] = useState(false)
   const [showApprovalDialog, setShowApprovalDialog] = useState(false)
+
+  // Tab state
+  const [activeTab, setActiveTab] = useState<'schema' | 'source'>('schema')
 
   // Inline edit state
   const [editingColName, setEditingColName] = useState<string | null>(null)
@@ -178,6 +181,7 @@ export default function ReviewPage() {
     setColDraft(null)
     setEditingTable(false)
     setTableDraft(null)
+    setActiveTab('schema')
   }
 
   const generateSql = useCallback(async () => {
@@ -385,7 +389,75 @@ export default function ReviewPage() {
                 </div>
               </div>
 
-              {/* Column list */}
+              {/* Tab bar */}
+              <div className="px-6 border-b border-gray-200 bg-white flex gap-0 flex-shrink-0">
+                <button
+                  onClick={() => setActiveTab('schema')}
+                  className={`px-4 py-2 text-sm font-medium border-b-2 transition-colors ${
+                    activeTab === 'schema'
+                      ? 'border-blue-500 text-blue-600'
+                      : 'border-transparent text-gray-500 hover:text-gray-700'
+                  }`}
+                >
+                  Schema
+                </button>
+                <button
+                  onClick={() => setActiveTab('source')}
+                  className={`px-4 py-2 text-sm font-medium border-b-2 transition-colors ${
+                    activeTab === 'source'
+                      ? 'border-blue-500 text-blue-600'
+                      : 'border-transparent text-gray-500 hover:text-gray-700'
+                  }`}
+                >
+                  Source Data
+                </button>
+              </div>
+
+              {/* Source Data tab */}
+              {activeTab === 'source' && (
+                <div className="flex-1 overflow-auto p-6">
+                  {selectedTable.sampleRows && selectedTable.sampleRows.length > 1 ? (
+                    <>
+                      <p className="text-xs text-gray-400 mb-3">Showing first 8 rows from source sheet.</p>
+                      <div className="overflow-x-auto">
+                        <table className="text-xs border-collapse w-full">
+                          <thead>
+                            <tr>
+                              {selectedTable.sampleRows[0].map((header, i) => (
+                                <th
+                                  key={i}
+                                  className="border border-gray-200 bg-gray-50 px-3 py-2 text-left font-semibold text-gray-700 whitespace-nowrap"
+                                >
+                                  {header}
+                                </th>
+                              ))}
+                            </tr>
+                          </thead>
+                          <tbody>
+                            {selectedTable.sampleRows.slice(1, 9).map((row, ri) => (
+                              <tr key={ri} className={ri % 2 === 0 ? 'bg-white' : 'bg-gray-50'}>
+                                {row.map((cell, ci) => (
+                                  <td
+                                    key={ci}
+                                    className="border border-gray-200 px-3 py-1.5 text-gray-600 whitespace-nowrap"
+                                  >
+                                    {cell}
+                                  </td>
+                                ))}
+                              </tr>
+                            ))}
+                          </tbody>
+                        </table>
+                      </div>
+                    </>
+                  ) : (
+                    <p className="text-sm text-gray-400">No source data available for this table.</p>
+                  )}
+                </div>
+              )}
+
+              {/* Schema tab — Column list */}
+              {activeTab === 'schema' && (
               <div className="flex-1 overflow-y-auto p-6">
                 <div className="space-y-2">
                   {selectedTable.columns.filter(c => !c.userRejected).map((col) => (
@@ -523,6 +595,11 @@ export default function ReviewPage() {
                             <div className="flex items-center gap-2 flex-wrap">
                               {col.confidence < 0.8 && <AlertTriangle className="w-3.5 h-3.5 text-amber-500 flex-shrink-0" />}
                               <p className="text-sm font-semibold text-gray-900 font-mono">{col.name}</p>
+                              {col.isPrimaryKey && (
+                                <span title="Primary key (used for upsert)">
+                                  <Key className="w-3.5 h-3.5 text-yellow-500" />
+                                </span>
+                              )}
                               {col.userModified && (
                                 <span className="text-xs text-blue-500 font-medium">edited</span>
                               )}
@@ -574,6 +651,7 @@ export default function ReviewPage() {
                   ))}
                 </div>
               </div>
+              )}
 
               {/* Bottom actions */}
               <div className="px-6 py-4 border-t border-gray-200 bg-white flex items-center justify-between flex-shrink-0">

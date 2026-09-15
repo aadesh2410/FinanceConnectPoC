@@ -1,9 +1,12 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { v4 as uuidv4 } from 'uuid'
+import crypto from 'crypto'
 import { analyzeWorkbook } from '@/lib/excel/workbook-analyzer'
 import { getSchemaInferenceProvider } from '@/lib/ai'
-import { saveJob } from '@/lib/jobs/job-store'
+import { saveJob, findJobByHash } from '@/lib/jobs/job-store'
 import { Job, AuditEvent } from '@/lib/schema/types'
+import { computeSchemaDiff } from '@/lib/schema/diff'
+import { extractSampleRows, extractAllRows } from '@/lib/excel/sample-extractor'
 
 export const runtime = 'nodejs'
 export const maxDuration = 120
@@ -26,6 +29,8 @@ export async function POST(req: NextRequest) {
     }
 
     const buffer = Buffer.from(await file.arrayBuffer())
+    const hash = crypto.createHash('md5').update(buffer).digest('hex')
+    const existingJob = await findJobByHash(hash)
     const jobId = uuidv4()
     const now = new Date().toISOString()
 
@@ -72,6 +77,27 @@ export async function POST(req: NextRequest) {
       details: `${summary.aiMode === 'mock' ? 'Mock' : 'Claude'} provider | ${proposedSchema.tables.length} tables | ${totalColumns} columns`,
     })
 
+    // Extract sample rows and all rows per table; mark first non-rejected column as primary key
+    const tableRows: Record<string, Array<Record<string, string>>> = {}
+    for (const table of proposedSchema.tables.filter((t) => !t.userRejected)) {
+      const sheet = analysis.sheets.find((s) => s.name === table.sourceSheet)
+      if (sheet) {
+        table.sampleRows = extractSampleRows(sheet)
+        tableRows[table.tableName] = extractAllRows(sheet)
+      }
+      // Mark first non-rejected column as primary key
+      const firstCol = table.columns.find((c) => !c.userRejected)
+      if (firstCol) firstCol.isPrimaryKey = true
+    }
+
+    // Compute diff if this workbook was seen before
+    const previousSchema = existingJob
+      ? (existingJob.approvedSchema ?? existingJob.proposedSchema)
+      : null
+    const schemaDiff = previousSchema
+      ? computeSchemaDiff(previousSchema, proposedSchema, existingJob!.jobId)
+      : undefined
+
     const job: Job = {
       jobId,
       fileName: file.name,
@@ -84,9 +110,24 @@ export async function POST(req: NextRequest) {
       executionMode: 'DEMO',
       executionResult: null,
       auditEvents,
+      workbookHash: hash,
+      schemaDiff,
+      tableRows,
     }
 
     await saveJob(job)
+
+    if (existingJob) {
+      return NextResponse.json({
+        jobId,
+        status: job.status,
+        workbookSummary: summary,
+        schema: proposedSchema,
+        duplicate: true,
+        previousJobId: existingJob.jobId,
+        schemaDiff,
+      })
+    }
 
     return NextResponse.json({
       jobId,

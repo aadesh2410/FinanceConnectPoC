@@ -34,6 +34,7 @@ export interface ColumnSchema {
   evidence: string[]
   userModified?: boolean
   userRejected?: boolean
+  isPrimaryKey?: boolean
 }
 
 export interface TableSchema {
@@ -45,6 +46,7 @@ export interface TableSchema {
   confidence: number
   columns: ColumnSchema[]
   userRejected?: boolean
+  sampleRows?: string[][]
 }
 
 export interface WorkbookSchema {
@@ -72,6 +74,26 @@ export interface WorkbookSummary {
   schemaReadinessScore: number
   aiMode: 'mock' | 'claude'
   sheets: SheetSummary[]
+}
+
+export interface ColumnDiff {
+  type: 'ADDED' | 'DROPPED' | 'TYPE_CHANGED'
+  columnName: string
+  oldType?: string
+  newType?: string
+}
+
+export interface TableDiff {
+  tableName: string
+  isNew: boolean
+  columnDiffs: ColumnDiff[]
+}
+
+export interface SchemaDiff {
+  previousJobId: string
+  hasChanges: boolean
+  tables: TableDiff[]
+  alterStatements: string[]
 }
 
 export interface AuditEvent {
@@ -104,4 +126,7 @@ export interface Job {
   executionMode: 'DEMO' | 'SNOWFLAKE'
   executionResult: ExecutionResult | null
   auditEvents: AuditEvent[]
+  workbookHash?: string
+  schemaDiff?: SchemaDiff
+  tableRows?: Record<string, Array<Record<string, string>>>
 }

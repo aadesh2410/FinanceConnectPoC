@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { getJob, updateJob } from '@/lib/jobs/job-store'
 import { generateDDL } from '@/lib/schema/sql-generator'
-import { executeDDL, isSnowflakeConfigured } from '@/lib/snowflake/client'
+import { executeDDL, isSnowflakeConfigured, upsertRows } from '@/lib/snowflake/client'
 
 export const runtime = 'nodejs'
 
@@ -24,13 +24,31 @@ export async function POST(_req: NextRequest, { params }: { params: { jobId: str
       const ddl = generateDDL(schema, { database, schema: sfSchema })
       const createdTables = await executeDDL(ddl)
 
+      // Upsert rows if available
+      let totalRowsLoaded = 0
+      if (job.tableRows) {
+        for (const table of schema.tables.filter((t) => !t.userRejected)) {
+          const rows = job.tableRows[table.tableName]
+          if (!rows?.length) continue
+          const colMap: Record<string, string> = {}
+          for (const col of table.columns) {
+            colMap[col.sourceColumn] = col.name
+          }
+          const sfCols = table.columns
+            .filter((c) => !c.userRejected)
+            .map((c) => ({ name: c.name, dataType: c.dataType, isPrimaryKey: c.isPrimaryKey }))
+          const count = await upsertRows(table.tableName, sfCols, rows, colMap)
+          totalRowsLoaded += count
+        }
+      }
+
       const executionResult = {
         mode: 'SNOWFLAKE' as const,
         success: true,
         database,
         schema: sfSchema,
         tables: createdTables,
-        message: `${createdTables.length} table(s) created in ${database}.${sfSchema}.`,
+        message: `${createdTables.length} table(s) created, ${totalRowsLoaded} row(s) upserted in ${database}.${sfSchema}.`,
       }
 
       await updateJob(params.jobId, {

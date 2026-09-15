@@ -129,19 +129,20 @@ export default function ResultPage() {
         <Card className="p-5 bg-white border border-gray-200">
           <h3 className="text-sm font-semibold text-gray-700 mb-4">Execution Timeline</h3>
           <div className="space-y-3">
-            {TIMELINE_STEPS.map((step) => {
+            {TIMELINE_STEPS.filter((step) => {
               const done = job.auditEvents.some((e) => e.event === step.key)
               const isCurrent = step.key === 'EXECUTING' && isExecuting
+              return done || isCurrent
+            }).map((step) => {
+              const done = job.auditEvents.some((e) => e.event === step.key)
               return (
                 <div key={step.key} className="flex items-center gap-3">
                   {done ? (
                     <CheckCircle2 className="w-4 h-4 text-green-500 flex-shrink-0" />
-                  ) : isCurrent ? (
-                    <RefreshCw className="w-4 h-4 text-blue-500 animate-spin flex-shrink-0" />
                   ) : (
-                    <Circle className="w-4 h-4 text-gray-300 flex-shrink-0" />
+                    <RefreshCw className="w-4 h-4 text-blue-500 animate-spin flex-shrink-0" />
                   )}
-                  <span className={`text-sm ${done ? 'text-gray-700' : 'text-gray-400'}`}>{step.label}</span>
+                  <span className="text-sm text-gray-700">{step.label}</span>
                 </div>
               )
             })}
