@@ -1,13 +1,12 @@
 'use client'
 import { useState, useRef, useCallback } from 'react'
 import { useRouter } from 'next/navigation'
-import { Upload, FileSpreadsheet, ChevronRight, Loader2 } from 'lucide-react'
+import { Upload, FileSpreadsheet, Loader2, AlertCircle } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { Card } from '@/components/ui/card'
 import { Badge } from '@/components/ui/badge'
 import { PageHeader } from '@/components/common/PageHeader'
-
-const STEPS = ['UPLOAD', 'ANALYZE', 'REVIEW', 'APPROVE', 'CREATE']
+import { AnalyzeProgress } from '@/components/common/AnalyzeProgress'
 
 export default function HomePage() {
   const router = useRouter()
@@ -70,16 +69,6 @@ export default function HomePage() {
             </p>
           </div>
 
-          {/* Workflow steps */}
-          <div className="flex items-center justify-center gap-1 text-xs font-medium">
-            {STEPS.map((step, i) => (
-              <span key={step} className="flex items-center gap-1">
-                <span className={i === 0 ? 'text-blue-600' : 'text-gray-400'}>{step}</span>
-                {i < STEPS.length - 1 && <ChevronRight className="w-3 h-3 text-gray-300" />}
-              </span>
-            ))}
-          </div>
-
           {/* Drop zone */}
           <Card
             className={`border-2 border-dashed cursor-pointer transition-colors ${
@@ -104,7 +93,7 @@ export default function HomePage() {
           </Card>
 
           {/* File info */}
-          {file && (
+          {file && !loading && (
             <Card className="p-5 bg-white border border-gray-200">
               <div className="flex items-start gap-3">
                 <FileSpreadsheet className="w-8 h-8 text-green-600 mt-0.5 flex-shrink-0" />
@@ -127,8 +116,14 @@ export default function HomePage() {
             </Card>
           )}
 
+          {/* Live step-by-step progress while /api/analyze is in flight */}
+          <AnalyzeProgress active={loading} />
+
           {error && (
-            <p className="text-sm text-red-600 text-center">{error}</p>
+            <div className="flex items-start gap-2 p-3 rounded-md border border-red-200 bg-red-50">
+              <AlertCircle className="w-4 h-4 text-red-600 flex-shrink-0 mt-0.5" />
+              <p className="text-sm text-red-700">{error}</p>
+            </div>
           )}
         </div>
       </main>

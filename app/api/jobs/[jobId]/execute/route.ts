@@ -1,5 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { getJob, updateJob } from '@/lib/jobs/job-store'
+import { generateDDL } from '@/lib/schema/sql-generator'
+import { executeDDL, isSnowflakeConfigured } from '@/lib/snowflake/client'
 
 export const runtime = 'nodejs'
 
@@ -11,19 +13,73 @@ export async function POST(_req: NextRequest, { params }: { params: { jobId: str
   }
 
   await updateJob(params.jobId, { status: 'EXECUTING' })
-  await new Promise((r) => setTimeout(r, 1500)) // simulate execution
 
   const schema = job.approvedSchema!
-  const simulatedAt = new Date().toISOString()
+  const database = process.env.SNOWFLAKE_DATABASE ?? 'FINANCE_POC'
+  const sfSchema = process.env.SNOWFLAKE_SCHEMA ?? 'EUC_SANDBOX'
+  const executedAt = new Date().toISOString()
+
+  if (isSnowflakeConfigured()) {
+    try {
+      const ddl = generateDDL(schema, { database, schema: sfSchema })
+      const createdTables = await executeDDL(ddl)
+
+      const executionResult = {
+        mode: 'SNOWFLAKE' as const,
+        success: true,
+        database,
+        schema: sfSchema,
+        tables: createdTables,
+        message: `${createdTables.length} table(s) created in ${database}.${sfSchema}.`,
+      }
+
+      await updateJob(params.jobId, {
+        status: 'CREATED',
+        executionMode: 'SNOWFLAKE',
+        executionResult,
+        auditEvents: [
+          ...job.auditEvents,
+          { timestamp: executedAt, event: 'SNOWFLAKE_EXECUTION_COMPLETED', actor: 'System', details: `SNOWFLAKE — ${createdTables.length} table(s) created: ${createdTables.join(', ')}` },
+        ],
+      })
+
+      return NextResponse.json({ status: 'CREATED', executionResult })
+    } catch (err: unknown) {
+      const message = err instanceof Error ? err.message : String(err)
+      const executionResult = {
+        mode: 'SNOWFLAKE' as const,
+        success: false,
+        database,
+        schema: sfSchema,
+        tables: [],
+        message: `Snowflake error: ${message}`,
+      }
+
+      await updateJob(params.jobId, {
+        status: 'FAILED',
+        executionMode: 'SNOWFLAKE',
+        executionResult,
+        auditEvents: [
+          ...job.auditEvents,
+          { timestamp: executedAt, event: 'SNOWFLAKE_EXECUTION_FAILED', actor: 'System', details: message },
+        ],
+      })
+
+      return NextResponse.json({ status: 'FAILED', executionResult }, { status: 500 })
+    }
+  }
+
+  // Demo fallback (no Snowflake credentials)
+  await new Promise((r) => setTimeout(r, 1500))
   const tables = schema.tables.filter((t) => !t.userRejected).map((t) => t.tableName)
 
   const executionResult = {
     mode: 'DEMO' as const,
     success: true,
-    database: process.env.SNOWFLAKE_DATABASE ?? 'FINANCE_POC',
-    schema: process.env.SNOWFLAKE_SCHEMA ?? 'EUC_SANDBOX',
+    database,
+    schema: sfSchema,
     tables,
-    simulatedAt,
+    simulatedAt: executedAt,
     message: 'Table creation simulated successfully.',
   }
 
@@ -32,7 +88,7 @@ export async function POST(_req: NextRequest, { params }: { params: { jobId: str
     executionResult,
     auditEvents: [
       ...job.auditEvents,
-      { timestamp: simulatedAt, event: 'SANDBOX_EXECUTION_COMPLETED', actor: 'System', details: `DEMO MODE — ${tables.length} table(s) simulated` },
+      { timestamp: executedAt, event: 'SANDBOX_EXECUTION_COMPLETED', actor: 'System', details: `DEMO MODE — ${tables.length} table(s) simulated` },
     ],
   })
 

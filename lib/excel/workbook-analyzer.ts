@@ -44,7 +44,7 @@ export async function analyzeWorkbook(buffer: Buffer, fileName: string): Promise
     totalProposedColumns: 0, // filled after schema inference
     lowConfidenceFieldCount: 0, // filled after schema inference
     formulaRegionCount,
-    schemaReadinessScore: 0.91,
+    schemaReadinessScore: 0, // computed after schema inference in analyze route
     aiMode: (process.env.AI_MODE as 'mock' | 'claude') ?? 'mock',
     sheets,
   }

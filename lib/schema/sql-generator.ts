@@ -68,7 +68,7 @@ export function generateDDL(schema: WorkbookSchema, options: GenerateOptions = {
     statements.push(
       `-- Table: ${table.description}`,
       `-- Source: ${table.sourceSheet}!${table.sourceRange}`,
-      `CREATE TABLE ${db}.${sc}.${table.tableName} (`,
+      `CREATE TABLE ${table.tableName} (`,
       colLines.join(',\n'),
       `);`,
       '',

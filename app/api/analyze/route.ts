@@ -54,6 +54,17 @@ export async function POST(req: NextRequest) {
     summary.totalProposedColumns = totalColumns
     summary.lowConfidenceFieldCount = lowConfidenceCount
 
+    // Compute schema readiness dynamically
+    const avgTableConfidence = proposedSchema.tables.length > 0
+      ? proposedSchema.tables.reduce((acc, t) => acc + t.confidence, 0) / proposedSchema.tables.length
+      : 0.5
+    const avgSheetConfidence = summary.sheets.length > 0
+      ? summary.sheets.reduce((acc, s) => acc + s.confidence, 0) / summary.sheets.length
+      : 0.5
+    const lowConfidenceRatio = totalColumns > 0 ? lowConfidenceCount / totalColumns : 0
+    const rawScore = (avgTableConfidence * 0.5) + (avgSheetConfidence * 0.3) + ((1 - lowConfidenceRatio) * 0.2)
+    summary.schemaReadinessScore = Math.min(1, Math.max(0, Math.round(rawScore * 100) / 100))
+
     auditEvents.push({
       timestamp: new Date().toISOString(),
       event: 'SCHEMA_GENERATED',
