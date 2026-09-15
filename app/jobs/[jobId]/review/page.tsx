@@ -64,6 +64,7 @@ export default function ReviewPage() {
   const [showSql, setShowSql] = useState(false)
   const [approving, setApproving] = useState(false)
   const [showApprovalDialog, setShowApprovalDialog] = useState(false)
+  const [approvalErrors, setApprovalErrors] = useState<string[]>([])
 
   // Tab state
   const [activeTab, setActiveTab] = useState<'schema' | 'source'>('schema')
@@ -199,10 +200,17 @@ export default function ReviewPage() {
 
   const approve = async () => {
     setApproving(true)
+    setApprovalErrors([])
     const res = await fetch(`/api/jobs/${jobId}/approve`, { method: 'POST' })
     if (res.ok) {
       router.push(`/jobs/${jobId}/result`)
     } else {
+      const data = await res.json()
+      const errs: string[] = (data.validationErrors ?? []).map(
+        (e: { table?: string; column?: string; message: string }) =>
+          [e.table, e.column, e.message].filter(Boolean).join(' → ')
+      )
+      setApprovalErrors(errs.length ? errs : [data.error ?? 'Approval failed'])
       setApproving(false)
     }
     setShowApprovalDialog(false)
@@ -269,15 +277,15 @@ export default function ReviewPage() {
         <div className="fixed inset-0 bg-black/40 z-50 flex items-center justify-center p-4">
           <div className="bg-white rounded-lg shadow-xl w-full max-w-md p-6 space-y-4">
             <h3 className="font-semibold text-gray-900">Confirm Approval</h3>
-            <p className="text-sm text-gray-600">You are about to create the following tables in the Finance Connect sandbox:</p>
+            <p className="text-sm text-gray-600">You are about to create the following tables in Snowflake:</p>
             <div className="bg-gray-50 rounded p-3 space-y-1">
               {activeTables.map((t) => (
                 <p key={t.tableName} className="text-sm font-mono text-gray-700">
-                  FINANCE_POC.EUC_SANDBOX.{t.tableName}
+                  {process.env.NEXT_PUBLIC_SNOWFLAKE_DATABASE ?? 'FINANCE_POC'}.{process.env.NEXT_PUBLIC_SNOWFLAKE_SCHEMA ?? 'EUC_SANDBOX'}.{t.tableName}
                 </p>
               ))}
             </div>
-            <p className="text-xs text-amber-600 font-medium">No production systems will be modified. This is a sandbox demo.</p>
+            <p className="text-xs text-amber-600 font-medium">This will execute DDL in your configured Snowflake account.</p>
             <div className="flex gap-2 justify-end pt-2">
               <Button variant="outline" onClick={() => setShowApprovalDialog(false)}>Cancel</Button>
               <Button onClick={approve} disabled={approving}>
@@ -654,6 +662,16 @@ export default function ReviewPage() {
               )}
 
               {/* Bottom actions */}
+              {approvalErrors.length > 0 && (
+                <div className="px-6 py-3 border-t border-red-200 bg-red-50">
+                  <p className="text-xs font-semibold text-red-700 mb-1">Fix these before approving:</p>
+                  <ul className="space-y-0.5">
+                    {approvalErrors.map((e, i) => (
+                      <li key={i} className="text-xs text-red-600">• {e}</li>
+                    ))}
+                  </ul>
+                </div>
+              )}
               <div className="px-6 py-4 border-t border-gray-200 bg-white flex items-center justify-between flex-shrink-0">
                 <div className="flex items-center gap-2 text-xs text-gray-500">
                   {saving && <><Loader2 className="w-3 h-3 animate-spin" />Saving...</>}

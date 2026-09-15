@@ -6,42 +6,46 @@ import { CheckCircle2, Loader2, Circle } from 'lucide-react'
 interface Step {
   label: string
   detail: string
-  /** approx duration in ms — used to animate progression while the real request is in flight */
   duration: number
 }
 
-const STEPS: Step[] = [
-  { label: 'Parsing workbook', detail: 'Reading sheets, cells, and named ranges', duration: 2500 },
-  { label: 'Detecting table regions', detail: 'Finding headers, data blocks, and formulas', duration: 2500 },
-  { label: 'Inferring schema with AI', detail: 'Claude is proposing tables, columns, and data types', duration: 12000 },
-  { label: 'Finalizing', detail: 'Computing confidence and readiness score', duration: 1500 },
-]
-
-interface AnalyzeProgressProps {
-  /** When true, animate through steps. When false, everything is idle/hidden. */
-  active: boolean
-  /** When true, snap all steps to done. */
-  done?: boolean
+function getSteps(aiMode: 'claude' | 'heuristic'): Step[] {
+  return [
+    { label: 'Parsing workbook', detail: 'Reading sheets, cells, and named ranges', duration: 2500 },
+    { label: 'Detecting table regions', detail: 'Finding headers, data blocks, and formulas', duration: 2500 },
+    aiMode === 'claude'
+      ? { label: 'Inferring schema with Claude AI', detail: 'Claude is proposing tables, columns, and data types', duration: 12000 }
+      : { label: 'Inferring schema locally', detail: 'Sampling cell values to determine column types', duration: 800 },
+    { label: 'Finalizing', detail: 'Computing confidence and readiness score', duration: 1500 },
+  ]
 }
 
-export function AnalyzeProgress({ active, done }: AnalyzeProgressProps) {
+interface AnalyzeProgressProps {
+  active: boolean
+  done?: boolean
+  aiMode?: 'claude' | 'heuristic'
+}
+
+export function AnalyzeProgress({ active, done, aiMode = 'claude' }: AnalyzeProgressProps) {
   const [current, setCurrent] = useState(0)
+  const steps = getSteps(aiMode)
 
   useEffect(() => {
     if (!active) { setCurrent(0); return }
-    if (done) { setCurrent(STEPS.length); return }
+    if (done) { setCurrent(steps.length); return }
 
     let idx = 0
     setCurrent(0)
     const advance = () => {
       idx += 1
-      if (idx >= STEPS.length - 1) return // hold on the last step until `done` fires
+      if (idx >= steps.length - 1) return
       setCurrent(idx)
-      timer = setTimeout(advance, STEPS[idx].duration)
+      timer = setTimeout(advance, steps[idx].duration)
     }
-    let timer = setTimeout(advance, STEPS[0].duration)
+    let timer = setTimeout(advance, steps[0].duration)
     return () => clearTimeout(timer)
-  }, [active, done])
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [active, done, aiMode])
 
   if (!active) return null
 
@@ -49,7 +53,7 @@ export function AnalyzeProgress({ active, done }: AnalyzeProgressProps) {
     <div className="border border-gray-200 bg-white rounded-lg p-5 space-y-3">
       <p className="text-sm font-semibold text-gray-700">Analyzing your workbook…</p>
       <ul className="space-y-2.5">
-        {STEPS.map((step, i) => {
+        {steps.map((step, i) => {
           const isDone = done || i < current
           const isActive = !done && i === current
           return (

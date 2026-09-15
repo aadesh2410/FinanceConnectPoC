@@ -59,6 +59,34 @@ function destroyAsync(conn: ReturnType<typeof snowflake.createConnection>): Prom
   })
 }
 
+function queryAsync(conn: ReturnType<typeof snowflake.createConnection>, sql: string): Promise<Record<string, unknown>[]> {
+  return new Promise((resolve, reject) => {
+    conn.execute({
+      sqlText: sql,
+      complete: (err, _stmt, rows) => (err ? reject(err) : resolve((rows ?? []) as Record<string, unknown>[])),
+    })
+  })
+}
+
+async function activateWarehouse(conn: ReturnType<typeof snowflake.createConnection>, configured: string): Promise<void> {
+  try {
+    await executeAsync(conn, `USE WAREHOUSE ${configured};`)
+    return
+  } catch {
+    console.warn(`[snowflake] warehouse '${configured}' not found — detecting available warehouses`)
+  }
+  // Auto-detect: pick the first warehouse returned by SHOW WAREHOUSES
+  try {
+    const rows = await queryAsync(conn, 'SHOW WAREHOUSES')
+    if (rows.length === 0) throw new Error('No warehouses found in this Snowflake account')
+    const name = String(rows[0]['name'] ?? '')
+    console.log(`[snowflake] auto-selected warehouse: ${name}`)
+    await executeAsync(conn, `USE WAREHOUSE ${name};`)
+  } catch (err) {
+    throw new Error(`Cannot activate a warehouse: ${err instanceof Error ? err.message : err}`)
+  }
+}
+
 /** Split a DDL script into individual statements and execute each one. */
 export async function executeDDL(ddlScript: string): Promise<string[]> {
   const cfg = getConfig()
@@ -126,6 +154,7 @@ export async function upsertRows(
   let totalUpserted = 0
 
   try {
+    await activateWarehouse(conn, cfg.warehouse)
     await executeAsync(conn, `USE DATABASE ${cfg.database};`)
     await executeAsync(conn, `USE SCHEMA ${cfg.schema};`)
 
@@ -139,6 +168,7 @@ export async function upsertRows(
               ([, sfName]) => sfName === col.name
             )?.[0]
             const raw = srcHeader ? (row[srcHeader] ?? '') : ''
+            if (raw === '') return 'NULL'
             const escaped = String(raw).replace(/'/g, "''")
             return `'${escaped}'`
           })

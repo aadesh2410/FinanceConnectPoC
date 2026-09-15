@@ -1,12 +1,16 @@
 'use client'
-import { useState, useRef, useCallback } from 'react'
+import { useState, useRef, useCallback, useEffect } from 'react'
 import { useRouter } from 'next/navigation'
-import { Upload, FileSpreadsheet, Loader2, AlertCircle, Info } from 'lucide-react'
+import { Upload, FileSpreadsheet, Loader2, AlertCircle, Info, Sparkles, Cpu } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { Card } from '@/components/ui/card'
 import { Badge } from '@/components/ui/badge'
 import { PageHeader } from '@/components/common/PageHeader'
 import { AnalyzeProgress } from '@/components/common/AnalyzeProgress'
+
+type AiMode = 'claude' | 'heuristic'
+
+const MODE_KEY = 'fc_ai_mode'
 
 export default function HomePage() {
   const router = useRouter()
@@ -14,6 +18,7 @@ export default function HomePage() {
   const [dragging, setDragging] = useState(false)
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState<string | null>(null)
+  const [aiMode, setAiMode] = useState<AiMode>('claude')
   const [duplicateBanner, setDuplicateBanner] = useState<{
     hasChanges: boolean
     changedTableCount: number
@@ -21,6 +26,17 @@ export default function HomePage() {
     newJobId: string
   } | null>(null)
   const inputRef = useRef<HTMLInputElement>(null)
+
+  useEffect(() => {
+    const saved = localStorage.getItem(MODE_KEY) as AiMode | null
+    if (saved === 'claude' || saved === 'heuristic') setAiMode(saved)
+  }, [])
+
+  const toggleMode = () => {
+    const next: AiMode = aiMode === 'claude' ? 'heuristic' : 'claude'
+    setAiMode(next)
+    localStorage.setItem(MODE_KEY, next)
+  }
 
   const handleFile = (f: File) => {
     if (!f.name.endsWith('.xlsx')) {
@@ -51,6 +67,7 @@ export default function HomePage() {
     try {
       const form = new FormData()
       form.append('file', file)
+      form.append('aiMode', aiMode)
       const res = await fetch('/api/analyze', { method: 'POST', body: form })
       const data = await res.json()
       if (!res.ok) throw new Error(data.error ?? 'Analysis failed')
@@ -62,7 +79,6 @@ export default function HomePage() {
           newJobId: data.jobId,
         })
         setLoading(false)
-        // Still navigate after a short pause so user sees the banner
         setTimeout(() => router.push(`/jobs/${data.jobId}`), 2500)
         return
       }
@@ -87,6 +103,39 @@ export default function HomePage() {
               Transform complex Excel EUCs into reviewable Snowflake data models.
             </p>
           </div>
+
+          {/* AI Mode toggle */}
+          <div className="flex items-center justify-center">
+            <div className="inline-flex items-center gap-1 p-1 rounded-lg bg-gray-100 border border-gray-200">
+              <button
+                onClick={() => { setAiMode('claude'); localStorage.setItem(MODE_KEY, 'claude') }}
+                className={`flex items-center gap-1.5 px-3 py-1.5 rounded-md text-xs font-medium transition-all ${
+                  aiMode === 'claude'
+                    ? 'bg-white shadow-sm text-violet-700 border border-violet-200'
+                    : 'text-gray-500 hover:text-gray-700'
+                }`}
+              >
+                <Sparkles className="w-3.5 h-3.5" />
+                Claude AI
+              </button>
+              <button
+                onClick={() => { setAiMode('heuristic'); localStorage.setItem(MODE_KEY, 'heuristic') }}
+                className={`flex items-center gap-1.5 px-3 py-1.5 rounded-md text-xs font-medium transition-all ${
+                  aiMode === 'heuristic'
+                    ? 'bg-white shadow-sm text-blue-700 border border-blue-200'
+                    : 'text-gray-500 hover:text-gray-700'
+                }`}
+              >
+                <Cpu className="w-3.5 h-3.5" />
+                Local (No AI)
+              </button>
+            </div>
+          </div>
+          <p className="text-center text-xs text-gray-400 -mt-6">
+            {aiMode === 'claude'
+              ? 'Claude reads headers, values and context to infer rich column types and descriptions.'
+              : 'Fast local analysis — no API call, types inferred from cell values only.'}
+          </p>
 
           {/* Drop zone */}
           <Card
@@ -119,7 +168,7 @@ export default function HomePage() {
                 <div className="flex-1 min-w-0">
                   <p className="text-sm font-medium text-gray-900 truncate">{file.name}</p>
                   <p className="text-xs text-gray-500 mt-0.5">
-                    {(file.size / 1024 / 1024).toFixed(2)} MB
+                    {(file.size / 1024 / 1024).toFixed(2)} MB · {aiMode === 'claude' ? 'Claude AI' : 'Local analysis'}
                   </p>
                 </div>
               </div>
@@ -136,7 +185,7 @@ export default function HomePage() {
           )}
 
           {/* Live step-by-step progress while /api/analyze is in flight */}
-          <AnalyzeProgress active={loading} />
+          <AnalyzeProgress active={loading} aiMode={aiMode} />
 
           {duplicateBanner && !duplicateBanner.hasChanges && (
             <div className="flex items-start gap-2 p-3 rounded-md border border-blue-200 bg-blue-50">

@@ -10,7 +10,7 @@ function columnToSql(col: ColumnSchema): string {
   let typeDef = ''
   switch (col.dataType) {
     case 'VARCHAR':
-      typeDef = `VARCHAR(${col.length ?? 255})`
+      typeDef = 'VARCHAR'
       break
     case 'NUMBER':
       typeDef = col.precision ? `NUMBER(${col.precision},${col.scale ?? 0})` : 'NUMBER'
@@ -31,10 +31,9 @@ function columnToSql(col: ColumnSchema): string {
       typeDef = 'TIMESTAMP'
       break
     default:
-      typeDef = 'VARCHAR(255)'
+      typeDef = 'VARCHAR'
   }
-  const nullability = col.nullable ? '' : ' NOT NULL'
-  return `    ${col.name.padEnd(30)} ${typeDef}${nullability}`
+  return `    ${col.name.padEnd(30)} ${typeDef}`
 }
 
 export function generateDDL(schema: WorkbookSchema, options: GenerateOptions = {}): string {
@@ -68,7 +67,7 @@ export function generateDDL(schema: WorkbookSchema, options: GenerateOptions = {
     statements.push(
       `-- Table: ${table.description}`,
       `-- Source: ${table.sourceSheet}!${table.sourceRange}`,
-      `CREATE TABLE ${table.tableName} (`,
+      `CREATE OR REPLACE TABLE ${table.tableName} (`,
       colLines.join(',\n'),
       `);`,
       '',

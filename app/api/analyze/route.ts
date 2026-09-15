@@ -15,6 +15,7 @@ export async function POST(req: NextRequest) {
   try {
     const formData = await req.formData()
     const file = formData.get('file') as File | null
+    const modeOverride = formData.get('aiMode') as string | null
 
     if (!file) {
       return NextResponse.json({ error: 'No file uploaded' }, { status: 400 })
@@ -48,6 +49,7 @@ export async function POST(req: NextRequest) {
     })
 
     // Infer schema
+    if (modeOverride) process.env.AI_MODE = modeOverride
     console.log('[analyze] AI_MODE =', process.env.AI_MODE, '| ANTHROPIC_API_KEY set =', !!process.env.ANTHROPIC_API_KEY)
     const provider = getSchemaInferenceProvider()
     const proposedSchema = await provider.inferSchema(analysis)
@@ -82,8 +84,8 @@ export async function POST(req: NextRequest) {
     for (const table of proposedSchema.tables.filter((t) => !t.userRejected)) {
       const sheet = analysis.sheets.find((s) => s.name === table.sourceSheet)
       if (sheet) {
-        table.sampleRows = extractSampleRows(sheet)
-        tableRows[table.tableName] = extractAllRows(sheet)
+        table.sampleRows = extractSampleRows(sheet, table.sourceRange)
+        tableRows[table.tableName] = extractAllRows(sheet, table.sourceRange)
       }
       // Mark first non-rejected column as primary key
       const firstCol = table.columns.find((c) => !c.userRejected)

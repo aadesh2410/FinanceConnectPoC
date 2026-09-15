@@ -26,19 +26,31 @@ export async function POST(_req: NextRequest, { params }: { params: { jobId: str
 
       // Upsert rows if available
       let totalRowsLoaded = 0
+      const upsertErrors: string[] = []
       if (job.tableRows) {
         for (const table of schema.tables.filter((t) => !t.userRejected)) {
           const rows = job.tableRows[table.tableName]
-          if (!rows?.length) continue
-          const colMap: Record<string, string> = {}
-          for (const col of table.columns) {
-            colMap[col.sourceColumn] = col.name
+          if (!rows?.length) {
+            console.log(`[upsert] ${table.tableName}: no rows stored, skipping`)
+            continue
           }
+          const colMap: Record<string, string> = {}
+          for (const col of table.columns) colMap[col.sourceColumn] = col.name
           const sfCols = table.columns
             .filter((c) => !c.userRejected)
             .map((c) => ({ name: c.name, dataType: c.dataType, isPrimaryKey: c.isPrimaryKey }))
-          const count = await upsertRows(table.tableName, sfCols, rows, colMap)
-          totalRowsLoaded += count
+          console.log(`[upsert] ${table.tableName}: ${rows.length} rows, ${sfCols.length} cols, pk=${sfCols.find(c => c.isPrimaryKey)?.name}`)
+          console.log(`[upsert] colMap sample:`, Object.entries(colMap).slice(0, 4))
+          console.log(`[upsert] first row sample:`, rows[0])
+          try {
+            const count = await upsertRows(table.tableName, sfCols, rows, colMap)
+            console.log(`[upsert] ${table.tableName}: ${count} rows upserted`)
+            totalRowsLoaded += count
+          } catch (upsertErr) {
+            const msg = upsertErr instanceof Error ? upsertErr.message : String(upsertErr)
+            console.error(`[upsert] ${table.tableName} failed:`, msg)
+            upsertErrors.push(`${table.tableName}: ${msg}`)
+          }
         }
       }
 
@@ -48,7 +60,7 @@ export async function POST(_req: NextRequest, { params }: { params: { jobId: str
         database,
         schema: sfSchema,
         tables: createdTables,
-        message: `${createdTables.length} table(s) created, ${totalRowsLoaded} row(s) upserted in ${database}.${sfSchema}.`,
+        message: `${createdTables.length} table(s) created, ${totalRowsLoaded} row(s) upserted in ${database}.${sfSchema}.${upsertErrors.length ? ` Upsert warnings: ${upsertErrors.join(' | ')}` : ''}`,
       }
 
       await updateJob(params.jobId, {
