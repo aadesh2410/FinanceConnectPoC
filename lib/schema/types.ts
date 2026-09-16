@@ -43,12 +43,22 @@ export interface PivotConfig {
   headerRow: number
   hierarchySourceCols: string[]
   hierarchyColumnNames: string[]
+  /** For each element in hierarchySourceCols: true = carry forward last non-empty value when cell is blank (handles merged cells) */
+  carryForwardHierarchyCols?: boolean[]
   valueColumnName: string
   dataStartRow: number
   dataEndRow: number
   pivotStartCol: string
   pivotEndCol: string
   excludePatterns: string[]
+  /** Regex patterns that match total/subtotal row labels (any hierarchy column value) */
+  totalPatterns?: string[]
+  /** Regex patterns that match section-header-only rows (rows with no data values, used as group labels) */
+  sectionHeaderPatterns?: string[]
+  /** If set, emit a column with this name containing DATA | SUBTOTAL | GRAND_TOTAL | SECTION_HEADER */
+  rowTypeColumnName?: string
+  /** If set, emit a boolean column with this name: true when row matches totalPatterns */
+  isTotalColumnName?: string
 }
 
 export interface TableSchema {

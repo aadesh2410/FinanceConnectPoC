@@ -16,6 +16,20 @@ function getCellValue(sheet: AnalyzedSheet, row: number, colLetter: string): str
   return cell && cell.value !== null && cell.value !== undefined ? String(cell.value).trim() : ''
 }
 
+type RowType = 'DATA' | 'SUBTOTAL' | 'GRAND_TOTAL' | 'SECTION_HEADER'
+
+function classifyRow(hierarchyValues: string[], totalPatterns: RegExp[], sectionHeaderPatterns: RegExp[]): RowType {
+  const combined = hierarchyValues.join(' ')
+  if (sectionHeaderPatterns.length > 0 && sectionHeaderPatterns.some((re) => re.test(combined))) {
+    return 'SECTION_HEADER'
+  }
+  if (totalPatterns.length > 0) {
+    if (/grand\s*total/i.test(combined)) return 'GRAND_TOTAL'
+    if (totalPatterns.some((re) => re.test(combined))) return 'SUBTOTAL'
+  }
+  return 'DATA'
+}
+
 export function extractPivotRows(
   sheet: AnalyzedSheet,
   pivotConfig: PivotConfig
@@ -25,12 +39,17 @@ export function extractPivotRows(
     headerRow,
     hierarchySourceCols,
     hierarchyColumnNames,
+    carryForwardHierarchyCols,
     valueColumnName,
     dataStartRow,
     dataEndRow,
     pivotStartCol,
     pivotEndCol,
     excludePatterns,
+    totalPatterns,
+    sectionHeaderPatterns,
+    rowTypeColumnName,
+    isTotalColumnName,
   } = pivotConfig
 
   const pivotStartIdx = colLetterToIndex(pivotStartCol.toUpperCase())
@@ -45,23 +64,46 @@ export function extractPivotRows(
   }
 
   const excludeRegexes = excludePatterns.map((p) => new RegExp(p, 'i'))
+  const totalRegexes = (totalPatterns ?? []).map((p) => new RegExp(p, 'i'))
+  const sectionHeaderRegexes = (sectionHeaderPatterns ?? []).map((p) => new RegExp(p, 'i'))
+
+  // Carry-forward state: last seen non-empty value per hierarchy column
+  const lastSeen: string[] = hierarchySourceCols.map(() => '')
 
   const results: Array<Record<string, string>> = []
 
   for (let rowNum = dataStartRow; rowNum <= dataEndRow; rowNum++) {
-    // Read hierarchy values
-    const hierarchyValues: string[] = hierarchySourceCols.map((col) =>
+    // Read raw hierarchy values from cells
+    const rawValues: string[] = hierarchySourceCols.map((col) =>
       getCellValue(sheet, rowNum, col)
     )
 
-    // Skip rows where ALL hierarchy values are blank
+    // Apply carry-forward for merged-cell columns
+    const hierarchyValues: string[] = rawValues.map((val, i) => {
+      const shouldCarry = carryForwardHierarchyCols?.[i] ?? false
+      if (val !== '') {
+        lastSeen[i] = val
+        return val
+      }
+      return shouldCarry ? lastSeen[i] : ''
+    })
+
+    // Skip rows where ALL (even after carry-forward) hierarchy values are blank
     if (hierarchyValues.every((v) => v === '')) continue
 
-    // Skip rows matching exclude patterns (any hierarchy value)
-    const shouldExclude = hierarchyValues.some((v) =>
-      excludeRegexes.some((re) => re.test(v))
-    )
-    if (shouldExclude) continue
+    // Skip rows matching exclude patterns
+    if (hierarchyValues.some((v) => excludeRegexes.some((re) => re.test(v)))) continue
+
+    const rowType = classifyRow(hierarchyValues, totalRegexes, sectionHeaderRegexes)
+
+    // Section-header rows have no data values — skip if no pivot values exist
+    if (rowType === 'SECTION_HEADER') {
+      const hasAnyValue = Array.from(dimensionValues.keys()).some((colIdx) => {
+        const cell = sheet.cells.find((c) => c.row === rowNum && c.col === colIdx)
+        return cell && cell.value !== null && cell.value !== undefined && String(cell.value).trim() !== ''
+      })
+      if (!hasAnyValue) continue
+    }
 
     // For each pivot column emit one flat record
     for (const [colIdx, dimensionValue] of Array.from(dimensionValues.entries())) {
@@ -79,6 +121,10 @@ export function extractPivotRows(
       })
 
       record[valueColumnName] = cellValue
+
+      if (rowTypeColumnName) record[rowTypeColumnName] = rowType
+      if (isTotalColumnName) record[isTotalColumnName] = (rowType === 'SUBTOTAL' || rowType === 'GRAND_TOTAL') ? 'true' : 'false'
+
       results.push(record)
     }
   }
@@ -91,8 +137,10 @@ export function extractPivotSampleRows(
   pivotConfig: PivotConfig,
   maxRows = 8
 ): string[][] {
-  const { dimensionColumnName, hierarchyColumnNames, valueColumnName } = pivotConfig
+  const { dimensionColumnName, hierarchyColumnNames, valueColumnName, rowTypeColumnName, isTotalColumnName } = pivotConfig
   const headers = [dimensionColumnName, ...hierarchyColumnNames, valueColumnName]
+  if (rowTypeColumnName) headers.push(rowTypeColumnName)
+  if (isTotalColumnName) headers.push(isTotalColumnName)
 
   const allRows = extractPivotRows(sheet, pivotConfig)
   const sample = allRows.slice(0, maxRows)

@@ -274,20 +274,36 @@ Using your Stage 0 semantic understanding and Stage 1 analysis, output the compl
 For pivot/CROSSTAB tables, add:
 "isPivot": true,
 "pivotConfig": {
-  "dimensionColumnName": "YEAR",
+  "dimensionColumnName": "FISCAL_YEAR",
   "dimensionType": "INTEGER",
   "headerRow": 8,
   "hierarchySourceCols": ["A", "B"],
-  "hierarchyColumnNames": ["BU_LEVEL_5", "BU_LEVEL_6"],
+  "hierarchyColumnNames": ["DIVISION_CODE", "BUSINESS_UNIT"],
+  "carryForwardHierarchyCols": [true, false],
   "valueColumnName": "REVENUE_USD_K",
   "dataStartRow": 9,
   "dataEndRow": 26,
   "pivotStartCol": "C",
   "pivotEndCol": "F",
-  "excludePatterns": ["Total", "Sub-Total", "Grand Total"]
+  "excludePatterns": [],
+  "totalPatterns": ["Total", "Sub-Total", "Sub Total"],
+  "sectionHeaderPatterns": [],
+  "rowTypeColumnName": "SOURCE_ROW_TYPE",
+  "isTotalColumnName": "IS_TOTAL_ROW"
 }
 
-The columns array for pivot tables must describe the FLATTENED schema: dimension column + hierarchy columns + value column. NOT one column per year.`
+Rules for carryForwardHierarchyCols:
+- Set true for any hierarchy column where the value is stored in a MERGED CELL that spans multiple rows (e.g. a division label "FID" merged across all its sub-rows). ExcelJS only returns the value in the top-left cell of a merge; all other cells in the merge are blank. Carry-forward fills those blanks with the last seen non-empty value so every row gets the correct label.
+- Set false for columns where each row has its own distinct value (e.g. the leaf-level business unit name).
+
+Rules for totalPatterns / isTotalColumnName / rowTypeColumnName:
+- Do NOT use excludePatterns to drop total rows — include them with IS_TOTAL_ROW=true so analysts can filter or aggregate as needed.
+- totalPatterns should match subtotal row labels (any hierarchy column value). Grand Total rows are auto-detected.
+- rowTypeColumnName emits: DATA | SUBTOTAL | GRAND_TOTAL | SECTION_HEADER per row.
+- isTotalColumnName emits: true for SUBTOTAL and GRAND_TOTAL rows, false otherwise.
+- Add IS_TOTAL_ROW (BOOLEAN) and SOURCE_ROW_TYPE (VARCHAR) to the columns array when these fields are set.
+
+The columns array for pivot tables must describe the FLATTENED schema: dimension column + hierarchy columns + value column + IS_TOTAL_ROW + SOURCE_ROW_TYPE. NOT one column per year.`
 }
 
 function buildStage3Prompt(existingRules: string[]): string {

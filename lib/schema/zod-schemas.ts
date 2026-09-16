@@ -30,12 +30,17 @@ const PivotConfigZod = z.object({
   headerRow: z.number(),
   hierarchySourceCols: z.array(z.string()),
   hierarchyColumnNames: z.array(z.string()),
+  carryForwardHierarchyCols: z.array(z.boolean()).optional(),
   valueColumnName: z.string(),
   dataStartRow: z.number(),
   dataEndRow: z.number(),
   pivotStartCol: z.string(),
   pivotEndCol: z.string(),
   excludePatterns: z.array(z.string()),
+  totalPatterns: z.array(z.string()).optional(),
+  sectionHeaderPatterns: z.array(z.string()).optional(),
+  rowTypeColumnName: z.string().optional(),
+  isTotalColumnName: z.string().optional(),
 })
 
 export const TableSchemaZod = z.object({
