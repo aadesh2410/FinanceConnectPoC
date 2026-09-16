@@ -8,7 +8,8 @@ import { Job, AuditEvent } from '@/lib/schema/types'
 import { computeSchemaDiff } from '@/lib/schema/diff'
 import { extractSampleRows, extractAllRows } from '@/lib/excel/sample-extractor'
 import { extractPivotRows, extractPivotSampleRows } from '@/lib/excel/pivot-extractor'
-import { getSkills } from '@/lib/skills/skill-store'
+import { getSkills, saveSkill, incrementUsage } from '@/lib/skills/skill-store'
+import { Skill } from '@/lib/skills/types'
 
 export const runtime = 'nodejs'
 export const maxDuration = 120
@@ -79,6 +80,47 @@ export async function POST(req: NextRequest) {
       actor: 'AI',
       details: `${summary.aiMode === 'mock' ? 'Mock' : 'Claude'} provider | ${proposedSchema.tables.length} tables | ${totalColumns} columns`,
     })
+
+    // ─── Skill library updates ────────────────────────────────────────────────
+    // 1) Increment usage for skills that were injected into this inference
+    const enabledSkillIds = skills.filter((s) => s.enabled).map((s) => s.id)
+    await Promise.all(enabledSkillIds.map((id) => incrementUsage(id).catch(() => {})))
+
+    // 2) Auto-persist AI-suggested skills above confidence threshold.
+    // Dedupe against existing rules (case-insensitive full-text match) so we
+    // don't accumulate near-duplicates across uploads.
+    const CONFIDENCE_THRESHOLD = 0.7
+    const existingRuleSet = new Set(skills.map((s) => s.rule.trim().toLowerCase()))
+    const savedSkillNames: string[] = []
+    const nowIso = new Date().toISOString()
+    for (const s of suggestedSkills) {
+      if (s.confidence < CONFIDENCE_THRESHOLD) continue
+      const key = s.rule.trim().toLowerCase()
+      if (existingRuleSet.has(key)) continue
+      existingRuleSet.add(key)
+      const skill: Skill = {
+        id: uuidv4(),
+        name: s.name,
+        category: s.category,
+        rule: s.rule,
+        examples: s.examples ?? [],
+        createdAt: nowIso,
+        source: 'AI_SUGGESTED',
+        usageCount: 0,
+        enabled: true,
+      }
+      await saveSkill(skill)
+      savedSkillNames.push(s.name)
+    }
+
+    if (savedSkillNames.length > 0) {
+      auditEvents.push({
+        timestamp: new Date().toISOString(),
+        event: 'SKILLS_LEARNED',
+        actor: 'AI',
+        details: `${savedSkillNames.length} new skill(s): ${savedSkillNames.join(', ')}`,
+      })
+    }
 
     const tableRows: Record<string, Array<Record<string, string>>> = {}
     for (const table of proposedSchema.tables.filter((t) => !t.userRejected)) {
