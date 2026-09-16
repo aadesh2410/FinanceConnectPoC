@@ -7,6 +7,8 @@ import { saveJob, findJobByHash } from '@/lib/jobs/job-store'
 import { Job, AuditEvent } from '@/lib/schema/types'
 import { computeSchemaDiff } from '@/lib/schema/diff'
 import { extractSampleRows, extractAllRows } from '@/lib/excel/sample-extractor'
+import { extractPivotRows, extractPivotSampleRows } from '@/lib/excel/pivot-extractor'
+import { getSkills } from '@/lib/skills/skill-store'
 
 export const runtime = 'nodejs'
 export const maxDuration = 120
@@ -39,7 +41,6 @@ export async function POST(req: NextRequest) {
       { timestamp: now, event: 'FILE_UPLOADED', actor: 'Demo User', details: file.name },
     ]
 
-    // Parse + analyze workbook
     const { analysis, summary } = await analyzeWorkbook(buffer, file.name)
     auditEvents.push({
       timestamp: new Date().toISOString(),
@@ -48,11 +49,12 @@ export async function POST(req: NextRequest) {
       details: `${summary.sheetCount} sheets, ${summary.candidateTableCount} candidate regions`,
     })
 
-    // Infer schema
     if (modeOverride) process.env.AI_MODE = modeOverride
     console.log('[analyze] AI_MODE =', process.env.AI_MODE, '| ANTHROPIC_API_KEY set =', !!process.env.ANTHROPIC_API_KEY)
+
+    const skills = await getSkills()
     const provider = getSchemaInferenceProvider()
-    const proposedSchema = await provider.inferSchema(analysis)
+    const { schema: proposedSchema, suggestedSkills } = await provider.inferSchema(analysis, skills)
 
     const totalColumns = proposedSchema.tables.reduce((acc, t) => acc + t.columns.length, 0)
     const lowConfidenceCount = proposedSchema.tables.reduce(
@@ -61,7 +63,6 @@ export async function POST(req: NextRequest) {
     summary.totalProposedColumns = totalColumns
     summary.lowConfidenceFieldCount = lowConfidenceCount
 
-    // Compute schema readiness dynamically
     const avgTableConfidence = proposedSchema.tables.length > 0
       ? proposedSchema.tables.reduce((acc, t) => acc + t.confidence, 0) / proposedSchema.tables.length
       : 0.5
@@ -79,20 +80,22 @@ export async function POST(req: NextRequest) {
       details: `${summary.aiMode === 'mock' ? 'Mock' : 'Claude'} provider | ${proposedSchema.tables.length} tables | ${totalColumns} columns`,
     })
 
-    // Extract sample rows and all rows per table; mark first non-rejected column as primary key
     const tableRows: Record<string, Array<Record<string, string>>> = {}
     for (const table of proposedSchema.tables.filter((t) => !t.userRejected)) {
       const sheet = analysis.sheets.find((s) => s.name === table.sourceSheet)
       if (sheet) {
-        table.sampleRows = extractSampleRows(sheet, table.sourceRange)
-        tableRows[table.tableName] = extractAllRows(sheet, table.sourceRange)
+        if (table.isPivot && table.pivotConfig) {
+          table.sampleRows = extractPivotSampleRows(sheet, table.pivotConfig)
+          tableRows[table.tableName] = extractPivotRows(sheet, table.pivotConfig)
+        } else {
+          table.sampleRows = extractSampleRows(sheet, table.sourceRange)
+          tableRows[table.tableName] = extractAllRows(sheet, table.sourceRange)
+        }
       }
-      // Mark first non-rejected column as primary key
       const firstCol = table.columns.find((c) => !c.userRejected)
       if (firstCol) firstCol.isPrimaryKey = true
     }
 
-    // Compute diff if this workbook was seen before
     const previousSchema = existingJob
       ? (existingJob.approvedSchema ?? existingJob.proposedSchema)
       : null
@@ -115,6 +118,7 @@ export async function POST(req: NextRequest) {
       workbookHash: hash,
       schemaDiff,
       tableRows,
+      suggestedSkills,
     }
 
     await saveJob(job)
@@ -128,6 +132,7 @@ export async function POST(req: NextRequest) {
         duplicate: true,
         previousJobId: existingJob.jobId,
         schemaDiff,
+        suggestedSkills,
       })
     }
 
@@ -136,6 +141,7 @@ export async function POST(req: NextRequest) {
       status: job.status,
       workbookSummary: summary,
       schema: proposedSchema,
+      suggestedSkills,
     })
   } catch (err) {
     console.error('Analyze error:', err)

@@ -1,9 +1,10 @@
 import Anthropic from '@anthropic-ai/sdk'
-import { SchemaInferenceProvider, WorkbookAnalysis } from './provider'
+import { SchemaInferenceProvider, WorkbookAnalysis, InferSchemaResult } from './provider'
 import { WorkbookSchema } from '@/lib/schema/types'
 import { WorkbookSchemaZod } from '@/lib/schema/zod-schemas'
 import { AnalyzedSheet } from '@/lib/excel/region-detector'
 import { CellData } from '@/lib/excel/parser'
+import { Skill, SuggestedSkill } from '@/lib/skills/types'
 
 const client = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY })
 
@@ -29,6 +30,23 @@ const FINANCE_SYSTEM_PROMPT = `You are a senior financial data engineer speciali
 - SUMMARY tables: formula-heavy, aggregations over TRANSACTIONAL data
 - CROSSTAB tables: one dimension on rows, one on columns (pivot-like structure)
 
+## Pivot / Crosstab table handling (CRITICAL)
+When a sheet has dimensional values as column headers (years, quarters, months, periods, categories that are NOT field names):
+1. Classify it as CROSSTAB tableType and set isPivot: true
+2. DO NOT create one column per year/quarter/month. Instead create a FLAT schema:
+   - One "dimension" column: e.g. YEAR INTEGER (for 2022–2025), PERIOD VARCHAR (for mixed), QUARTER VARCHAR (for Q1/Q2...)
+   - If headers are "YYYY Qn" format: create BOTH YEAR INTEGER AND QUARTER VARCHAR
+   - Row hierarchy columns: name them SEMANTICALLY based on the data context (not generic LEVEL_1, LEVEL_2)
+   - One value column: named after the metric (REVENUE_USD, HEADCOUNT_FTE, CTI_RATIO etc.)
+3. In pivotConfig, populate ALL fields: dimensionColumnName, dimensionType, headerRow, hierarchySourceCols (Excel col letters), hierarchyColumnNames (semantic names), valueColumnName, dataStartRow, dataEndRow, pivotStartCol, pivotEndCol, excludePatterns
+4. The "columns" array should reflect the FLATTENED schema — not the raw pivot columns
+
+## Row hierarchy naming rules
+- Use finance domain knowledge to name hierarchy levels semantically
+- "FID", "IED", "BRM" in a financial context → these are business divisions (name the column DIVISION or BU_NAME or BU_LEVEL_5 based on context)
+- Sub-rows under a parent → BU_LEVEL_6 or COST_CENTER or SUB_DIVISION
+- If in doubt, prefer descriptive names over generic ones
+
 ## Output rules
 - tableName: UPPER_SNAKE_CASE derived from sheet name and financial context
 - dataType: VARCHAR | NUMBER | INTEGER | FLOAT | BOOLEAN | DATE | TIMESTAMP
@@ -44,6 +62,30 @@ function colLetter(n: number): string {
     n = Math.floor(n / 26)
   }
   return result
+}
+
+export function buildSkillsContext(skills: Skill[]): string {
+  const enabled = skills.filter((s) => s.enabled)
+  if (enabled.length === 0) return ''
+
+  const grouped: Record<string, Skill[]> = {}
+  for (const skill of enabled) {
+    if (!grouped[skill.category]) grouped[skill.category] = []
+    grouped[skill.category].push(skill)
+  }
+
+  const lines: string[] = ['## Organisation-specific rules (apply these in all inferences)']
+  for (const [category, categorySkills] of Object.entries(grouped)) {
+    lines.push(`\n### ${category}`)
+    for (const skill of categorySkills) {
+      lines.push(`- ${skill.rule}`)
+      if (skill.examples && skill.examples.length > 0) {
+        lines.push(`  Examples: ${skill.examples.join('; ')}`)
+      }
+    }
+  }
+
+  return lines.join('\n')
 }
 
 function buildWorkbookContext(input: WorkbookAnalysis): string {
@@ -72,7 +114,6 @@ function buildWorkbookContext(input: WorkbookAnalysis): string {
             .join('\n')
         : '  No header detected'
 
-      // Per-column dominant numFmt within data region
       const colFormats: Record<string, Record<string, number>> = {}
       if (dataRegion) {
         sheet.cells
@@ -94,7 +135,6 @@ function buildWorkbookContext(input: WorkbookAnalysis): string {
         })
         .join(', ')
 
-      // Sample data rows (up to 3)
       const sampleRows = dataRegion
         ? sheet.cells
             .filter(
@@ -113,7 +153,6 @@ function buildWorkbookContext(input: WorkbookAnalysis): string {
         .map(([row, vals]) => `  row ${row}: ${vals.join(', ')}`)
         .join('\n')
 
-      // Cell comments (up to 5)
       const comments = sheet.cells
         .filter((c: CellData) => c.comment)
         .slice(0, 5)
@@ -139,8 +178,11 @@ function buildWorkbookContext(input: WorkbookAnalysis): string {
 ${sheetSummaries}`
 }
 
-function buildStage1Prompt(input: WorkbookAnalysis): string {
-  return `${buildWorkbookContext(input)}
+function buildStage1Prompt(input: WorkbookAnalysis, skills?: Skill[]): string {
+  const skillsContext = skills && skills.length > 0 ? buildSkillsContext(skills) : ''
+  const skillsSection = skillsContext ? `\n\n${skillsContext}\n` : ''
+
+  return `${buildWorkbookContext(input)}${skillsSection}
 
 ## Stage 1 — Table identification
 For every sheet that contains tabular data, state:
@@ -148,6 +190,7 @@ For every sheet that contains tabular data, state:
 - Header row number(s) (may be multi-level)
 - Exact data range in Excel notation (e.g. A5:H250)
 - Column letter, header label, and inferred Snowflake dataType — one line per column
+- For CROSSTAB/pivot sheets: identify dimension values in headers, hierarchy cols, and the single metric value col
 
 Use numFmt evidence and finance domain knowledge to justify type choices. Be concise.`
 }
@@ -165,6 +208,7 @@ Using your analysis above, output the complete schema as valid JSON (no markdown
       "sourceSheet": "exact sheet name",
       "sourceRange": "A5:H250",
       "tableType": "TRANSACTIONAL",
+      "isPivot": false,
       "confidence": 0.95,
       "columns": [
         {
@@ -181,14 +225,44 @@ Using your analysis above, output the complete schema as valid JSON (no markdown
       ]
     }
   ]
+}
+
+For pivot/crosstab tables, also include:
+"isPivot": true,
+"pivotConfig": {
+  "dimensionColumnName": "YEAR",
+  "dimensionType": "INTEGER",
+  "headerRow": 3,
+  "hierarchySourceCols": ["A", "B"],
+  "hierarchyColumnNames": ["DIVISION", "COST_CENTER"],
+  "valueColumnName": "REVENUE_USD",
+  "dataStartRow": 5,
+  "dataEndRow": 120,
+  "pivotStartCol": "C",
+  "pivotEndCol": "F",
+  "excludePatterns": ["Total", "Sub-Total", "Grand Total"]
 }`
 }
 
-export class ClaudeSchemaInferenceProvider implements SchemaInferenceProvider {
-  async inferSchema(input: WorkbookAnalysis): Promise<WorkbookSchema> {
-    const stage1Prompt = buildStage1Prompt(input)
+function buildStage3Prompt(existingSkillRules: string[]): string {
+  const existing = existingSkillRules.length > 0
+    ? `\nExisting rules (do NOT re-suggest these):\n${existingSkillRules.map((r) => `- ${r}`).join('\n')}\n`
+    : ''
+  return `## Stage 3 — Suggest skills for future inferences
+${existing}
+Based on the workbook you just analysed, suggest 0–3 reusable rules that would help infer schemas for similar workbooks in the future. Focus on:
+- Organisation-specific terminology you encountered (e.g. what "FID" means in this context)
+- Structural patterns you detected that aren't in the existing rules
+- Data type inference rules specific to this domain
 
-    // Stage 1: structure identification (non-streaming, shorter output)
+Output as JSON array (empty array if nothing new):
+[{ "name": "...", "category": "ORG_CONTEXT|COLUMN_NAMING|DATA_TYPE_RULE|PERIOD_FORMAT|STRUCTURE_RULE", "rule": "...", "examples": [...], "confidence": 0.0, "reason": "..." }]`
+}
+
+export class ClaudeSchemaInferenceProvider implements SchemaInferenceProvider {
+  async inferSchema(input: WorkbookAnalysis, skills?: Skill[]): Promise<InferSchemaResult> {
+    const stage1Prompt = buildStage1Prompt(input, skills)
+
     const stage1Msg = await client.messages.create({
       model: 'claude-opus-4-7',
       max_tokens: 4096,
@@ -198,23 +272,21 @@ export class ClaudeSchemaInferenceProvider implements SchemaInferenceProvider {
       messages: [{ role: 'user', content: stage1Prompt }] as any,
     })
 
-    // Stage 2: full schema JSON, seeding with Stage 1 analysis for context
-    const stream = client.messages.stream({
+    const stage2Stream = client.messages.stream({
       model: 'claude-opus-4-7',
       max_tokens: 16000,
       system: FINANCE_SYSTEM_PROMPT,
       thinking: { type: 'adaptive' },
       messages: [
         { role: 'user', content: stage1Prompt },
-        // Pass all content blocks (including thinking) back so Claude can build on prior reasoning
         { role: 'assistant', content: stage1Msg.content as Parameters<typeof client.messages.create>[0]['messages'][0]['content'] },
         { role: 'user', content: buildStage2Prompt() },
       ],
     })
 
-    const message = await stream.finalMessage()
+    const stage2Message = await stage2Stream.finalMessage()
 
-    const textBlock = message.content.find((b) => b.type === 'text')
+    const textBlock = stage2Message.content.find((b) => b.type === 'text')
     if (!textBlock || textBlock.type !== 'text') {
       throw new Error('Claude returned no text content for schema inference')
     }
@@ -223,7 +295,37 @@ export class ClaudeSchemaInferenceProvider implements SchemaInferenceProvider {
     raw = raw.replace(/^```(?:json)?\s*/i, '').replace(/\s*```$/, '').trim()
 
     const parsed = JSON.parse(raw)
-    const result = WorkbookSchemaZod.parse(parsed)
-    return result
+    const schema = WorkbookSchemaZod.parse(parsed) as WorkbookSchema
+
+    // Stage 3 — skill suggestions
+    let suggestedSkills: SuggestedSkill[] = []
+    try {
+      const existingRules = skills ? skills.filter((s) => s.enabled).map((s) => s.rule) : []
+      const stage3Prompt = buildStage3Prompt(existingRules)
+
+      const stage3Msg = await client.messages.create({
+        model: 'claude-opus-4-7',
+        max_tokens: 2048,
+        system: FINANCE_SYSTEM_PROMPT,
+        messages: [
+          { role: 'user', content: stage1Prompt },
+          { role: 'assistant', content: stage1Msg.content as Parameters<typeof client.messages.create>[0]['messages'][0]['content'] },
+          { role: 'user', content: buildStage2Prompt() },
+          { role: 'assistant', content: stage2Message.content as Parameters<typeof client.messages.create>[0]['messages'][0]['content'] },
+          { role: 'user', content: stage3Prompt },
+        ],
+      })
+
+      const stage3Text = stage3Msg.content.find((b) => b.type === 'text')
+      if (stage3Text && stage3Text.type === 'text') {
+        let stage3Raw = stage3Text.text.trim()
+        stage3Raw = stage3Raw.replace(/^```(?:json)?\s*/i, '').replace(/\s*```$/, '').trim()
+        suggestedSkills = JSON.parse(stage3Raw) as SuggestedSkill[]
+      }
+    } catch {
+      suggestedSkills = []
+    }
+
+    return { schema, suggestedSkills }
   }
 }

@@ -1,7 +1,8 @@
-import { SchemaInferenceProvider, WorkbookAnalysis } from './provider'
+import { SchemaInferenceProvider, WorkbookAnalysis, InferSchemaResult } from './provider'
 import { WorkbookSchema, ColumnSchema, SnowflakeDataType, TableType } from '@/lib/schema/types'
 import { AnalyzedSheet, DetectedRegion } from '@/lib/excel/region-detector'
 import { indexToColLetter } from '@/lib/excel/sample-extractor'
+import { Skill } from '@/lib/skills/types'
 
 function toSnakeCase(header: string): string {
   let result = header
@@ -124,7 +125,7 @@ function buildTableFromSheet(sheet: AnalyzedSheet, region: DetectedRegion, fileN
 }
 
 export class HeuristicSchemaInferenceProvider implements SchemaInferenceProvider {
-  async inferSchema(input: WorkbookAnalysis): Promise<WorkbookSchema> {
+  async inferSchema(input: WorkbookAnalysis, _skills?: Skill[]): Promise<InferSchemaResult> {
     const tables: WorkbookSchema['tables'] = []
 
     for (const sheet of input.sheets) {
@@ -136,6 +137,6 @@ export class HeuristicSchemaInferenceProvider implements SchemaInferenceProvider
       if (table) tables.push(table)
     }
 
-    return { workbookName: input.fileName, tables }
+    return { schema: { workbookName: input.fileName, tables }, suggestedSkills: [] }
   }
 }

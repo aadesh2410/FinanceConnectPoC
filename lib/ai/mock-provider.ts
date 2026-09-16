@@ -1,15 +1,17 @@
-import { SchemaInferenceProvider, WorkbookAnalysis } from './provider'
+import { SchemaInferenceProvider, WorkbookAnalysis, InferSchemaResult } from './provider'
 import { WorkbookSchema } from '@/lib/schema/types'
+import { Skill } from '@/lib/skills/types'
 
 export class MockSchemaInferenceProvider implements SchemaInferenceProvider {
-  async inferSchema(input: WorkbookAnalysis): Promise<WorkbookSchema> {
+  async inferSchema(input: WorkbookAnalysis, _skills?: Skill[]): Promise<InferSchemaResult> {
     await new Promise((r) => setTimeout(r, 800)) // simulate latency
 
     const tables = input.sheets.slice(0, 4).map((sheet, idx) => {
       return getMockTableForSheet(sheet.name, idx, input.fileName)
     })
 
-    return { workbookName: input.fileName, tables: tables.filter(Boolean) as WorkbookSchema['tables'] }
+    const schema: WorkbookSchema = { workbookName: input.fileName, tables: tables.filter(Boolean) as WorkbookSchema['tables'] }
+    return { schema, suggestedSkills: [] }
   }
 }
 

@@ -37,6 +37,20 @@ export interface ColumnSchema {
   isPrimaryKey?: boolean
 }
 
+export interface PivotConfig {
+  dimensionColumnName: string
+  dimensionType: 'INTEGER' | 'VARCHAR'
+  headerRow: number
+  hierarchySourceCols: string[]
+  hierarchyColumnNames: string[]
+  valueColumnName: string
+  dataStartRow: number
+  dataEndRow: number
+  pivotStartCol: string
+  pivotEndCol: string
+  excludePatterns: string[]
+}
+
 export interface TableSchema {
   tableName: string
   description: string
@@ -47,6 +61,8 @@ export interface TableSchema {
   columns: ColumnSchema[]
   userRejected?: boolean
   sampleRows?: string[][]
+  isPivot?: boolean
+  pivotConfig?: PivotConfig
 }
 
 export interface WorkbookSchema {
@@ -129,4 +145,5 @@ export interface Job {
   workbookHash?: string
   schemaDiff?: SchemaDiff
   tableRows?: Record<string, Array<Record<string, string>>>
+  suggestedSkills?: import('@/lib/skills/types').SuggestedSkill[]
 }

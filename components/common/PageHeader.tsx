@@ -1,7 +1,8 @@
 'use client'
 
 import { usePathname } from 'next/navigation'
-import { ChevronRight } from 'lucide-react'
+import Link from 'next/link'
+import { ChevronRight, BookOpen } from 'lucide-react'
 import { Badge } from '@/components/ui/badge'
 
 interface PageHeaderProps {
@@ -62,6 +63,14 @@ export function PageHeader({ subtitle }: PageHeaderProps) {
             )
           })}
         </nav>
+
+        <Link
+          href="/skills"
+          className="flex items-center gap-1 text-xs font-medium text-gray-500 hover:text-gray-800 transition-colors flex-shrink-0"
+        >
+          <BookOpen className="w-3.5 h-3.5" />
+          Skills
+        </Link>
 
         <Badge variant="outline" className="text-amber-600 border-amber-300 bg-amber-50 text-xs font-semibold flex-shrink-0">
           DEMO MODE
