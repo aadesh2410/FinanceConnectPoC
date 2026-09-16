@@ -513,7 +513,7 @@ export class ClaudeSchemaInferenceProvider implements SchemaInferenceProvider {
     try {
       const stage0Msg = await client.messages.create({
         model: 'claude-opus-4-7',
-        max_tokens: 4096,
+        max_tokens: 16000,
         system: SEMANTIC_SYSTEM_PROMPT,
         thinking: { type: 'adaptive' },
         // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -522,10 +522,19 @@ export class ClaudeSchemaInferenceProvider implements SchemaInferenceProvider {
       const stage0Text = stage0Msg.content.find((b) => b.type === 'text')
       if (stage0Text?.type === 'text') {
         let raw = stage0Text.text.trim().replace(/^```(?:json)?\s*/i, '').replace(/\s*```$/, '').trim()
-        // Store raw JSON string for Stage 1 context injection
+        // Extract the JSON array — model sometimes wraps it in prose. Grab from first '[' to matching last ']'.
+        const firstBracket = raw.indexOf('[')
+        const lastBracket = raw.lastIndexOf(']')
+        if (firstBracket !== -1 && lastBracket > firstBracket) {
+          raw = raw.slice(firstBracket, lastBracket + 1)
+        }
+        // Guard against truncated response (stop_reason: max_tokens).
+        if (stage0Msg.stop_reason === 'max_tokens') {
+          throw new Error(`Stage 0 hit max_tokens limit (16000). Response truncated at ${raw.length} chars — increase limit or reduce grid dump size.`)
+        }
         JSON.parse(raw) // validate it's parseable
         semanticContext = raw
-        console.log('[claude] Stage 0 semantic pre-pass complete')
+        console.log('[claude] Stage 0 semantic pre-pass complete (%d chars)', raw.length)
       }
     } catch (err) {
       console.warn('[claude] Stage 0 failed, proceeding without semantic context:', err instanceof Error ? err.message : err)
@@ -536,7 +545,7 @@ export class ClaudeSchemaInferenceProvider implements SchemaInferenceProvider {
 
     const stage1Msg = await client.messages.create({
       model: 'claude-opus-4-7',
-      max_tokens: 4096,
+      max_tokens: 8000,
       system: SCHEMA_SYSTEM_PROMPT,
       thinking: { type: 'adaptive' },
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
