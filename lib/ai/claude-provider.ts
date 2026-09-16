@@ -8,197 +8,242 @@ import { Skill, SuggestedSkill } from '@/lib/skills/types'
 
 const client = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY })
 
-// Stable finance domain conventions — suitable for prompt caching
-const FINANCE_SYSTEM_PROMPT = `You are a senior financial data engineer specialising in EUC (End User Computing) workbooks used by treasury, risk, and finance teams.
+// ─── System prompts ──────────────────────────────────────────────────────────
+
+const SEMANTIC_SYSTEM_PROMPT = `You are a senior financial data analyst expert at reading Excel workbooks used in banking, treasury, and risk management.
+
+Your job is to look at the RAW CELL LAYOUT of a workbook and determine the BUSINESS MEANING of each sheet — not how to store it, but what it actually represents. Focus on:
+- What business question does this sheet answer?
+- Is it a flat table, a pivot/matrix (years or periods as columns), a hierarchical list, a lookup, or metadata?
+- What do the row labels represent from a finance domain perspective?
+- What do the column headers represent — are they field names or dimensional values (years, quarters, months)?
+- What metric is being tracked? What are its units?
+- Which rows are section headers, subtotals, grand totals, or notes — not data rows?
+
+Finance domain knowledge to apply:
+- BU/cost centre codes (FID, IED, BRM, GBM, etc.) are business unit hierarchies
+- 4-digit years as column headers = pivot on fiscal year
+- "YYYY Qn" = pivot on fiscal year + quarter
+- Bold rows spanning all columns = section headers
+- "Total", "Sub-Total", "Grand Total" rows = aggregates, not raw data
+- Currency suffixes in titles ("USD '000s", "GBP m") define the unit for numeric columns
+- Confidence/probability values (0.0–1.0 or 0%–100%) = FLOAT, not NUMBER`
+
+const SCHEMA_SYSTEM_PROMPT = `You are a senior financial data engineer specialising in EUC (End User Computing) workbooks used by treasury, risk, and finance teams.
 
 ## Finance domain conventions
-- FX Exposure: currency pairs (USD/EUR etc.), notional amounts, MTM (mark-to-market), PnL columns
-- Trade data: trade IDs, counterparty/entity names, settlement/value dates, instruments (FX Spot, Forward, Swap, Option)
-- Risk parameters: delta, gamma, vega, theta, VaR, DV01, PV01
+- FX Exposure: currency pairs, notional amounts, MTM, PnL
+- Trade data: trade IDs, counterparty names, settlement dates, instruments (Spot, Forward, Swap, Option)
+- Risk parameters: delta, gamma, vega, VaR, DV01, PV01
 - Excel numFmt signals:
-  - "0.00%" → FLOAT (percentage)
-  - "$#,##0.00" or "#,##0.00" or "_(* #,##0.00_)" → NUMBER (monetary)
-  - "DD/MM/YYYY" or "MM/DD/YYYY" or "YYYY-MM-DD" or any date pattern → DATE
+  - "0.00%" → FLOAT
+  - "#,##0.00" or monetary pattern → NUMBER
+  - Date pattern → DATE
   - "0" or "#,##0" (no decimals) → INTEGER
-  - "General" with numeric content → NUMBER or FLOAT depending on values
-  - Text-only columns → VARCHAR
-- Named ranges often mark canonical table boundaries — prefer them over heuristic detection
-- Multi-level headers: row N-1 is a category group (e.g. "Market Risk"), row N is the field name (e.g. "Delta USD")
-- Null sentinels: "N/A", "-", "#N/A" mean the field is NULLABLE
-- Totals/subtotal rows (bold, "Total", "Sub-Total", "Grand Total") are NOT data rows
-- LOOKUP tables: ≤30 rows, mostly VARCHAR columns, reference/config data
-- SUMMARY tables: formula-heavy, aggregations over TRANSACTIONAL data
-- CROSSTAB tables: one dimension on rows, one on columns (pivot-like structure)
+  - Text-only → VARCHAR
+- Named ranges often mark canonical table boundaries
+- Null sentinels: "N/A", "-", "#N/A" → NULLABLE
 
-## Pivot / Crosstab table handling (CRITICAL)
-When a sheet has dimensional values as column headers (years, quarters, months, periods, categories that are NOT field names):
-1. Classify it as CROSSTAB tableType and set isPivot: true
-2. DO NOT create one column per year/quarter/month. Instead create a FLAT schema:
-   - One "dimension" column: e.g. YEAR INTEGER (for 2022–2025), PERIOD VARCHAR (for mixed), QUARTER VARCHAR (for Q1/Q2...)
-   - If headers are "YYYY Qn" format: create BOTH YEAR INTEGER AND QUARTER VARCHAR
-   - Row hierarchy columns: name them SEMANTICALLY based on the data context (not generic LEVEL_1, LEVEL_2)
-   - One value column: named after the metric (REVENUE_USD, HEADCOUNT_FTE, CTI_RATIO etc.)
-3. In pivotConfig, populate ALL fields: dimensionColumnName, dimensionType, headerRow, hierarchySourceCols (Excel col letters), hierarchyColumnNames (semantic names), valueColumnName, dataStartRow, dataEndRow, pivotStartCol, pivotEndCol, excludePatterns
-4. The "columns" array should reflect the FLATTENED schema — not the raw pivot columns
+## Pivot / Crosstab handling (CRITICAL)
+When the semantic pre-analysis identifies a sheet as PIVOT or MATRIX:
+1. Set tableType: "CROSSTAB" and isPivot: true
+2. Create a FLATTENED schema — one row per (dimension value × hierarchy row)
+3. Columns must reflect the FLAT output:
+   - Dimension column (e.g. YEAR INTEGER, PERIOD VARCHAR, YEAR + QUARTER if "YYYY Qn")
+   - One column per hierarchy level (use the semantic names provided)
+   - One value column named after the metric + unit (e.g. REVENUE_USD_K, HEADCOUNT_FTE)
+4. Populate pivotConfig completely from the semantic pre-analysis
+5. DO NOT create one column per year/quarter — that defeats the purpose
 
-## Row hierarchy naming rules
-- Use finance domain knowledge to name hierarchy levels semantically
-- "FID", "IED", "BRM" in a financial context → these are business divisions (name the column DIVISION or BU_NAME or BU_LEVEL_5 based on context)
-- Sub-rows under a parent → BU_LEVEL_6 or COST_CENTER or SUB_DIVISION
-- If in doubt, prefer descriptive names over generic ones
+## Naming rules
+- tableName: UPPER_SNAKE_CASE from sheet name + business context
+- Column names: UPPER_SNAKE_CASE, semantic (not COL_A, COL_B)
+- Use the semantic names from Stage 0 — do not invent new ones without justification
+- Hierarchy levels: use the names suggested (BU_LEVEL_5, DIVISION, COST_CENTER, etc.)
 
 ## Output rules
-- tableName: UPPER_SNAKE_CASE derived from sheet name and financial context
 - dataType: VARCHAR | NUMBER | INTEGER | FLOAT | BOOLEAN | DATE | TIMESTAMP
-- confidence 0–1: reflect numFmt evidence weight and data sampling
-- evidence: 2–3 concise strings justifying each column's type and confidence
+- confidence 0–1: weight numFmt evidence heavily
+- evidence: 2–3 concise strings per column
 - Include "userModified": false on every column`
+
+// ─── Grid renderer (Stage 0 input) ───────────────────────────────────────────
 
 function colLetter(n: number): string {
   let result = ''
-  while (n > 0) {
-    n--
-    result = String.fromCharCode(65 + (n % 26)) + result
-    n = Math.floor(n / 26)
-  }
+  while (n > 0) { n--; result = String.fromCharCode(65 + (n % 26)) + result; n = Math.floor(n / 26) }
   return result
 }
 
-export function buildSkillsContext(skills: Skill[]): string {
-  const enabled = skills.filter((s) => s.enabled)
-  if (enabled.length === 0) return ''
+function buildGridDump(sheet: AnalyzedSheet, maxRows = 40): string {
+  const allRows = Array.from(new Set(sheet.cells.map((c) => c.row))).sort((a, b) => a - b)
+  const rowsToShow = allRows.slice(0, maxRows)
 
-  const grouped: Record<string, Skill[]> = {}
-  for (const skill of enabled) {
-    if (!grouped[skill.category]) grouped[skill.category] = []
-    grouped[skill.category].push(skill)
-  }
-
-  const lines: string[] = ['## Organisation-specific rules (apply these in all inferences)']
-  for (const [category, categorySkills] of Object.entries(grouped)) {
-    lines.push(`\n### ${category}`)
-    for (const skill of categorySkills) {
-      lines.push(`- ${skill.rule}`)
-      if (skill.examples && skill.examples.length > 0) {
-        lines.push(`  Examples: ${skill.examples.join('; ')}`)
+  const mergedSet = new Set<string>()
+  for (const m of sheet.mergedCells ?? []) {
+    for (let r = m.top; r <= m.bottom; r++) {
+      for (let c = m.left; c <= m.right; c++) {
+        if (r !== m.top || c !== m.left) mergedSet.add(`${r}:${c}`)
       }
     }
+  }
+
+  const lines: string[] = [`=== Sheet: "${sheet.name}" (${sheet.rowCount} rows × ${sheet.colCount} cols) ===`]
+
+  for (const rowNum of rowsToShow) {
+    const cells = sheet.cells.filter((c) => c.row === rowNum).sort((a, b) => a.col - b.col)
+    if (cells.length === 0) { lines.push(`Row ${rowNum}: [empty]`); continue }
+
+    const isMergedSpan = (r: number, c: number) => mergedSet.has(`${r}:${c}`)
+    const isMergeStart = sheet.mergedCells?.some((m) => m.top === rowNum && m.left === cells[0]?.col)
+    const isBoldRow = cells.every((c) => (c as CellData & { bold?: boolean }).bold)
+
+    const cellStrs = cells
+      .filter((c) => !isMergedSpan(c.row, c.col))
+      .map((c) => {
+        const bold = (c as CellData & { bold?: boolean }).bold ? '*' : ''
+        const val = c.value === null ? '' : JSON.stringify(c.value)
+        const fmt = c.numFmt ? ` [${c.numFmt}]` : ''
+        return `${bold}${colLetter(c.col)}${rowNum}:${val}${fmt}${bold}`
+      })
+
+    const mergeNote = isMergeStart ? ' (merged/span)' : ''
+    const boldNote = isBoldRow ? ' ← BOLD ROW' : ''
+    lines.push(`Row ${String(rowNum).padStart(3)}: ${cellStrs.join('  ')}${mergeNote}${boldNote}`)
+  }
+
+  if (allRows.length > maxRows) {
+    lines.push(`... (${allRows.length - maxRows} more rows not shown)`)
   }
 
   return lines.join('\n')
 }
 
-function buildWorkbookContext(input: WorkbookAnalysis): string {
-  const namedRangesStr = input.namedRanges?.length
-    ? `\n## Named ranges (canonical table boundaries):\n` +
-      input.namedRanges.map((nr) => `  ${nr.name}: ${nr.sheet}!${nr.range}`).join('\n')
-    : ''
+function buildStage0Prompt(input: WorkbookAnalysis): string {
+  const grids = input.sheets.map((s) => buildGridDump(s)).join('\n\n')
 
-  const sheetSummaries = input.sheets
-    .map((sheet: AnalyzedSheet) => {
-      const headerRows = sheet.headerRows?.length
-        ? sheet.headerRows
-        : sheet.headerRow !== null
-          ? [sheet.headerRow]
-          : []
-      const dataRegion = sheet.primaryDataRegion
+  return `Workbook: "${input.fileName}" (${input.sheets.length} sheets, ${Math.round(input.fileSize / 1024)} KB)
 
-      const headers = headerRows.length > 0
-        ? headerRows
-            .map((hr) => {
-              const rowCells = sheet.cells
-                .filter((c: CellData) => c.row === hr)
-                .sort((a, b) => a.col - b.col)
-              return `  Header row ${hr}: ` + rowCells.map((c) => `${colLetter(c.col)}:"${c.value}"`).join(', ')
-            })
-            .join('\n')
-        : '  No header detected'
+${grids}
 
-      const colFormats: Record<string, Record<string, number>> = {}
-      if (dataRegion) {
-        sheet.cells
-          .filter(
-            (c: CellData) =>
-              c.row >= dataRegion.startRow && c.row <= dataRegion.endRow && c.numFmt,
-          )
-          .forEach((c: CellData) => {
-            const col = colLetter(c.col)
-            if (!colFormats[col]) colFormats[col] = {}
-            const fmt = c.numFmt!
-            colFormats[col][fmt] = (colFormats[col][fmt] ?? 0) + 1
-          })
+## Your task — Semantic Pre-Analysis
+
+For each sheet, output a JSON object describing the business semantics. Return a JSON array, one entry per sheet:
+
+[
+  {
+    "sheetName": "exact sheet name",
+    "structureType": "FLAT_TABLE | PIVOT_MATRIX | HIERARCHICAL_LIST | LOOKUP | METADATA | UNKNOWN",
+    "businessPurpose": "one sentence describing what this data represents",
+    "workbookDomain": "e.g. Revenue Planning, Credit Risk, Trade Exposure",
+    "metadataRows": [list of row numbers that are titles/labels/notes, not data],
+    "headerRow": <row number of the column header row, or null>,
+    "dataStartRow": <first actual data row number>,
+    "dataEndRow": <last actual data row number>,
+    "rowDimensions": [
+      {
+        "sourceCol": "A",
+        "businessName": "human-readable name, e.g. Business Division",
+        "suggestedColumnName": "UPPER_SNAKE_CASE, e.g. BU_LEVEL_5",
+        "dataType": "VARCHAR|INTEGER|NUMBER|FLOAT|DATE|BOOLEAN",
+        "description": "what this column represents, including any known decode (e.g. FID = Fixed Income Division)"
       }
-      const numFmtStr = Object.entries(colFormats)
-        .map(([col, fmts]) => {
-          const [fmt] = Object.entries(fmts).sort((a, b) => b[1] - a[1])[0]
-          return `${col}:"${fmt}"`
-        })
-        .join(', ')
+    ],
+    "pivotDimension": {
+      "headerRow": <row number containing the pivot column headers>,
+      "startCol": "C",
+      "endCol": "F",
+      "sampleValues": ["2022", "2023", "2024", "2025"],
+      "dimensionType": "FISCAL_YEAR | CALENDAR_YEAR | QUARTER | MONTH | PERIOD | CATEGORY",
+      "suggestedColumnName": "YEAR",
+      "dataType": "INTEGER|VARCHAR",
+      "splitIntoColumns": false,
+      "splitColumns": []
+    },
+    "metric": {
+      "businessName": "Revenue",
+      "unit": "USD '000s",
+      "suggestedColumnName": "REVENUE_USD_K",
+      "dataType": "NUMBER|INTEGER|FLOAT",
+      "description": "what the value cells represent"
+    },
+    "specialRows": [
+      {"pattern": "regex or literal to match row label", "type": "SECTION_HEADER|SUBTOTAL|GRAND_TOTAL|NOTE", "description": "..."}
+    ]
+  }
+]
 
-      const sampleRows = dataRegion
-        ? sheet.cells
-            .filter(
-              (c: CellData) =>
-                c.row >= dataRegion.startRow &&
-                c.row <= Math.min(dataRegion.startRow + 3, dataRegion.endRow),
-            )
-            .reduce<Record<number, string[]>>((acc, c) => {
-              if (!acc[c.row]) acc[c.row] = []
-              acc[c.row].push(`${colLetter(c.col)}=${JSON.stringify(c.value)}`)
-              return acc
-            }, {})
-        : {}
-      const sampleStr = Object.entries(sampleRows)
-        .slice(0, 3)
-        .map(([row, vals]) => `  row ${row}: ${vals.join(', ')}`)
-        .join('\n')
-
-      const comments = sheet.cells
-        .filter((c: CellData) => c.comment)
-        .slice(0, 5)
-        .map((c: CellData) => `  ${colLetter(c.col)}${c.row}: "${c.comment}"`)
-        .join('\n')
-
-      return [
-        `Sheet: "${sheet.name}" (${sheet.rowCount} rows × ${sheet.colCount} cols)`,
-        `  Data region: ${dataRegion ? `rows ${dataRegion.startRow}–${dataRegion.endRow}, cols ${colLetter(dataRegion.startCol)}–${colLetter(dataRegion.endCol)}` : 'none detected'}`,
-        headers,
-        numFmtStr ? `  Column numFmts: ${numFmtStr}` : '',
-        sampleStr ? `  Sample data:\n${sampleStr}` : '',
-        comments ? `  Cell comments:\n${comments}` : '',
-      ]
-        .filter(Boolean)
-        .join('\n')
-    })
-    .join('\n\n')
-
-  return `Workbook: "${input.fileName}" (${Math.round(input.fileSize / 1024)} KB, ${input.sheets.length} sheets)${namedRangesStr}
-
-## Sheets:
-${sheetSummaries}`
+Set pivotDimension to null for non-pivot sheets. Set metric to null for flat tables with multiple typed columns. Be precise about row numbers — they are used directly for data extraction.`
 }
 
-function buildStage1Prompt(input: WorkbookAnalysis, skills?: Skill[]): string {
-  const skillsContext = skills && skills.length > 0 ? buildSkillsContext(skills) : ''
-  const skillsSection = skillsContext ? `\n\n${skillsContext}\n` : ''
+// ─── Stage 1: structure identification (uses semantic context) ────────────────
 
-  return `${buildWorkbookContext(input)}${skillsSection}
+function buildWorkbookContext(input: WorkbookAnalysis): string {
+  const namedRangesStr = input.namedRanges?.length
+    ? `\n## Named ranges:\n` + input.namedRanges.map((nr) => `  ${nr.name}: ${nr.sheet}!${nr.range}`).join('\n')
+    : ''
+
+  const sheetSummaries = input.sheets.map((sheet: AnalyzedSheet) => {
+    const dataRegion = sheet.primaryDataRegion
+    const headerRows = sheet.headerRows?.length ? sheet.headerRows : sheet.headerRow !== null ? [sheet.headerRow] : []
+
+    const headers = headerRows.length > 0
+      ? headerRows.map((hr) => {
+          const rowCells = sheet.cells.filter((c) => c.row === hr).sort((a, b) => a.col - b.col)
+          return `  Header row ${hr}: ` + rowCells.map((c) => `${colLetter(c.col)}:"${c.value}"`).join(', ')
+        }).join('\n')
+      : '  No header detected'
+
+    const colFormats: Record<string, Record<string, number>> = {}
+    if (dataRegion) {
+      sheet.cells
+        .filter((c) => c.row >= dataRegion.startRow && c.row <= dataRegion.endRow && c.numFmt)
+        .forEach((c) => {
+          const col = colLetter(c.col)
+          if (!colFormats[col]) colFormats[col] = {}
+          colFormats[col][c.numFmt!] = (colFormats[col][c.numFmt!] ?? 0) + 1
+        })
+    }
+    const numFmtStr = Object.entries(colFormats)
+      .map(([col, fmts]) => {
+        const [fmt] = Object.entries(fmts).sort((a, b) => b[1] - a[1])[0]
+        return `${col}:"${fmt}"`
+      }).join(', ')
+
+    return [
+      `Sheet: "${sheet.name}" (${sheet.rowCount}r × ${sheet.colCount}c)`,
+      `  Data region: ${dataRegion ? `rows ${dataRegion.startRow}–${dataRegion.endRow}, cols ${colLetter(dataRegion.startCol)}–${colLetter(dataRegion.endCol)}` : 'none'}`,
+      headers,
+      numFmtStr ? `  numFmts: ${numFmtStr}` : '',
+    ].filter(Boolean).join('\n')
+  }).join('\n\n')
+
+  return `Workbook: "${input.fileName}" (${Math.round(input.fileSize / 1024)} KB, ${input.sheets.length} sheets)${namedRangesStr}\n\n${sheetSummaries}`
+}
+
+function buildStage1Prompt(input: WorkbookAnalysis, semanticContext: string, skills?: Skill[]): string {
+  const skillsBlock = skills && skills.length > 0 ? buildSkillsContext(skills) : ''
+
+  return `${buildWorkbookContext(input)}
+
+## Semantic Pre-Analysis (from Stage 0 — trust this over heuristic detection)
+${semanticContext}
+${skillsBlock ? `\n${skillsBlock}` : ''}
 
 ## Stage 1 — Table identification
-For every sheet that contains tabular data, state:
-- Sheet name and inferred table type (TRANSACTIONAL | LOOKUP | SUMMARY | CROSSTAB)
-- Header row number(s) (may be multi-level)
-- Exact data range in Excel notation (e.g. A5:H250)
-- Column letter, header label, and inferred Snowflake dataType — one line per column
-- For CROSSTAB/pivot sheets: identify dimension values in headers, hierarchy cols, and the single metric value col
-
-Use numFmt evidence and finance domain knowledge to justify type choices. Be concise.`
+For every sheet that contains tabular data:
+- Confirm or correct the Stage 0 structural classification
+- State header row(s), data range in Excel notation (e.g. A8:F26)
+- For FLAT tables: one line per column with letter, header label, and inferred type
+- For PIVOT/MATRIX sheets: confirm the dimension column name, hierarchy column names, and value column name from Stage 0
+- Use numFmt evidence and the semantic pre-analysis to justify all type choices`
 }
 
 function buildStage2Prompt(): string {
   return `## Stage 2 — Generate Snowflake schema JSON
 
-Using your analysis above, output the complete schema as valid JSON (no markdown fences, no commentary outside the JSON):
+Using your Stage 0 semantic understanding and Stage 1 analysis, output the complete schema as valid JSON (no markdown fences, no commentary outside the JSON):
+
 {
   "workbookName": "<filename>",
   "tables": [
@@ -206,8 +251,8 @@ Using your analysis above, output the complete schema as valid JSON (no markdown
       "tableName": "UPPER_SNAKE_CASE",
       "description": "...",
       "sourceSheet": "exact sheet name",
-      "sourceRange": "A5:H250",
-      "tableType": "TRANSACTIONAL",
+      "sourceRange": "A8:F26",
+      "tableType": "TRANSACTIONAL|LOOKUP|SUMMARY|CROSSTAB",
       "isPivot": false,
       "confidence": 0.95,
       "columns": [
@@ -216,7 +261,6 @@ Using your analysis above, output the complete schema as valid JSON (no markdown
           "sourceColumn": "A",
           "sourceRange": "A2:A100",
           "dataType": "VARCHAR",
-          "length": 100,
           "nullable": true,
           "confidence": 0.92,
           "evidence": ["reason 1", "reason 2"],
@@ -227,55 +271,105 @@ Using your analysis above, output the complete schema as valid JSON (no markdown
   ]
 }
 
-For pivot/crosstab tables, also include:
+For pivot/CROSSTAB tables, add:
 "isPivot": true,
 "pivotConfig": {
   "dimensionColumnName": "YEAR",
   "dimensionType": "INTEGER",
-  "headerRow": 3,
+  "headerRow": 8,
   "hierarchySourceCols": ["A", "B"],
-  "hierarchyColumnNames": ["DIVISION", "COST_CENTER"],
-  "valueColumnName": "REVENUE_USD",
-  "dataStartRow": 5,
-  "dataEndRow": 120,
+  "hierarchyColumnNames": ["BU_LEVEL_5", "BU_LEVEL_6"],
+  "valueColumnName": "REVENUE_USD_K",
+  "dataStartRow": 9,
+  "dataEndRow": 26,
   "pivotStartCol": "C",
   "pivotEndCol": "F",
   "excludePatterns": ["Total", "Sub-Total", "Grand Total"]
-}`
 }
 
-function buildStage3Prompt(existingSkillRules: string[]): string {
-  const existing = existingSkillRules.length > 0
-    ? `\nExisting rules (do NOT re-suggest these):\n${existingSkillRules.map((r) => `- ${r}`).join('\n')}\n`
+The columns array for pivot tables must describe the FLATTENED schema: dimension column + hierarchy columns + value column. NOT one column per year.`
+}
+
+function buildStage3Prompt(existingRules: string[]): string {
+  const existing = existingRules.length > 0
+    ? `\nExisting rules (do NOT re-suggest):\n${existingRules.map((r) => `- ${r}`).join('\n')}\n`
     : ''
-  return `## Stage 3 — Suggest skills for future inferences
+  return `## Stage 3 — Suggest skills
 ${existing}
-Based on the workbook you just analysed, suggest 0–3 reusable rules that would help infer schemas for similar workbooks in the future. Focus on:
-- Organisation-specific terminology you encountered (e.g. what "FID" means in this context)
-- Structural patterns you detected that aren't in the existing rules
-- Data type inference rules specific to this domain
+Suggest 0–3 reusable rules to improve future inferences for similar workbooks. Focus on:
+- Org-specific terminology discovered (e.g. what "FID" means)
+- New structural patterns not covered by existing rules
+- Domain-specific type inference rules
 
-Output as JSON array (empty array if nothing new):
-[{ "name": "...", "category": "ORG_CONTEXT|COLUMN_NAMING|DATA_TYPE_RULE|PERIOD_FORMAT|STRUCTURE_RULE", "rule": "...", "examples": [...], "confidence": 0.0, "reason": "..." }]`
+Output as JSON array ([] if nothing new):
+[{"name":"...","category":"ORG_CONTEXT|COLUMN_NAMING|DATA_TYPE_RULE|PERIOD_FORMAT|STRUCTURE_RULE","rule":"...","examples":[],"confidence":0.0,"reason":"..."}]`
 }
+
+export function buildSkillsContext(skills: Skill[]): string {
+  const enabled = skills.filter((s) => s.enabled)
+  if (enabled.length === 0) return ''
+  const grouped: Record<string, Skill[]> = {}
+  for (const skill of enabled) {
+    if (!grouped[skill.category]) grouped[skill.category] = []
+    grouped[skill.category].push(skill)
+  }
+  const lines = ['## Organisation-specific rules (apply to all inferences)']
+  for (const [cat, catSkills] of Object.entries(grouped)) {
+    lines.push(`\n### ${cat}`)
+    for (const s of catSkills) {
+      lines.push(`- ${s.rule}`)
+      if (s.examples?.length) lines.push(`  Examples: ${s.examples.join('; ')}`)
+    }
+  }
+  return lines.join('\n')
+}
+
+// ─── Provider ─────────────────────────────────────────────────────────────────
 
 export class ClaudeSchemaInferenceProvider implements SchemaInferenceProvider {
   async inferSchema(input: WorkbookAnalysis, skills?: Skill[]): Promise<InferSchemaResult> {
-    const stage1Prompt = buildStage1Prompt(input, skills)
+
+    // ── Stage 0: Semantic pre-pass ────────────────────────────────────────────
+    // Separate system prompt — this is a business analyst, not a schema engineer
+    let semanticContext = ''
+    try {
+      const stage0Msg = await client.messages.create({
+        model: 'claude-opus-4-7',
+        max_tokens: 4096,
+        system: SEMANTIC_SYSTEM_PROMPT,
+        thinking: { type: 'adaptive' },
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        messages: [{ role: 'user', content: buildStage0Prompt(input) }] as any,
+      })
+      const stage0Text = stage0Msg.content.find((b) => b.type === 'text')
+      if (stage0Text?.type === 'text') {
+        let raw = stage0Text.text.trim().replace(/^```(?:json)?\s*/i, '').replace(/\s*```$/, '').trim()
+        // Store raw JSON string for Stage 1 context injection
+        JSON.parse(raw) // validate it's parseable
+        semanticContext = raw
+        console.log('[claude] Stage 0 semantic pre-pass complete')
+      }
+    } catch (err) {
+      console.warn('[claude] Stage 0 failed, proceeding without semantic context:', err instanceof Error ? err.message : err)
+    }
+
+    // ── Stage 1: Structure identification ────────────────────────────────────
+    const stage1Prompt = buildStage1Prompt(input, semanticContext, skills)
 
     const stage1Msg = await client.messages.create({
       model: 'claude-opus-4-7',
       max_tokens: 4096,
-      system: FINANCE_SYSTEM_PROMPT,
+      system: SCHEMA_SYSTEM_PROMPT,
       thinking: { type: 'adaptive' },
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
       messages: [{ role: 'user', content: stage1Prompt }] as any,
     })
 
+    // ── Stage 2: Schema JSON ──────────────────────────────────────────────────
     const stage2Stream = client.messages.stream({
       model: 'claude-opus-4-7',
       max_tokens: 16000,
-      system: FINANCE_SYSTEM_PROMPT,
+      system: SCHEMA_SYSTEM_PROMPT,
       thinking: { type: 'adaptive' },
       messages: [
         { role: 'user', content: stage1Prompt },
@@ -285,42 +379,32 @@ export class ClaudeSchemaInferenceProvider implements SchemaInferenceProvider {
     })
 
     const stage2Message = await stage2Stream.finalMessage()
-
     const textBlock = stage2Message.content.find((b) => b.type === 'text')
-    if (!textBlock || textBlock.type !== 'text') {
-      throw new Error('Claude returned no text content for schema inference')
-    }
+    if (!textBlock || textBlock.type !== 'text') throw new Error('Claude returned no text for schema inference')
 
-    let raw = textBlock.text.trim()
-    raw = raw.replace(/^```(?:json)?\s*/i, '').replace(/\s*```$/, '').trim()
+    let raw = textBlock.text.trim().replace(/^```(?:json)?\s*/i, '').replace(/\s*```$/, '').trim()
+    const schema = WorkbookSchemaZod.parse(JSON.parse(raw)) as WorkbookSchema
 
-    const parsed = JSON.parse(raw)
-    const schema = WorkbookSchemaZod.parse(parsed) as WorkbookSchema
-
-    // Stage 3 — skill suggestions
+    // ── Stage 3: Skill suggestions ────────────────────────────────────────────
     let suggestedSkills: SuggestedSkill[] = []
     try {
-      const existingRules = skills ? skills.filter((s) => s.enabled).map((s) => s.rule) : []
-      const stage3Prompt = buildStage3Prompt(existingRules)
-
+      const existingRules = skills?.filter((s) => s.enabled).map((s) => s.rule) ?? []
       const stage3Msg = await client.messages.create({
         model: 'claude-opus-4-7',
         max_tokens: 2048,
-        system: FINANCE_SYSTEM_PROMPT,
+        system: SCHEMA_SYSTEM_PROMPT,
         messages: [
           { role: 'user', content: stage1Prompt },
           { role: 'assistant', content: stage1Msg.content as Parameters<typeof client.messages.create>[0]['messages'][0]['content'] },
           { role: 'user', content: buildStage2Prompt() },
           { role: 'assistant', content: stage2Message.content as Parameters<typeof client.messages.create>[0]['messages'][0]['content'] },
-          { role: 'user', content: stage3Prompt },
+          { role: 'user', content: buildStage3Prompt(existingRules) },
         ],
       })
-
-      const stage3Text = stage3Msg.content.find((b) => b.type === 'text')
-      if (stage3Text && stage3Text.type === 'text') {
-        let stage3Raw = stage3Text.text.trim()
-        stage3Raw = stage3Raw.replace(/^```(?:json)?\s*/i, '').replace(/\s*```$/, '').trim()
-        suggestedSkills = JSON.parse(stage3Raw) as SuggestedSkill[]
+      const s3Text = stage3Msg.content.find((b) => b.type === 'text')
+      if (s3Text?.type === 'text') {
+        let s3Raw = s3Text.text.trim().replace(/^```(?:json)?\s*/i, '').replace(/\s*```$/, '').trim()
+        suggestedSkills = JSON.parse(s3Raw) as SuggestedSkill[]
       }
     } catch {
       suggestedSkills = []

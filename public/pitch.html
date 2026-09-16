@@ -1,0 +1,978 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Finance Connect PoC — From Excel Chaos to Governed Snowflake Data</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800;900&family=JetBrains+Mono:wght@400;600&display=swap" rel="stylesheet">
+<style>
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  html { scroll-behavior: smooth; }
+  body {
+    font-family: 'Inter', -apple-system, BlinkMacSystemFont, sans-serif;
+    color: #1a1f36;
+    line-height: 1.6;
+    background: #ffffff;
+    -webkit-font-smoothing: antialiased;
+  }
+  .container { max-width: 1200px; margin: 0 auto; padding: 0 32px; }
+
+  /* NAV */
+  nav {
+    position: sticky; top: 0; z-index: 100;
+    background: rgba(11, 18, 45, 0.95);
+    backdrop-filter: blur(10px);
+    padding: 16px 0;
+    border-bottom: 1px solid rgba(255,255,255,0.08);
+  }
+  nav .container { display: flex; justify-content: space-between; align-items: center; }
+  .logo { color: #fff; font-weight: 800; font-size: 18px; letter-spacing: -0.02em; display: flex; align-items: center; gap: 10px; }
+  .logo-mark {
+    width: 32px; height: 32px; border-radius: 8px;
+    background: linear-gradient(135deg, #6366f1 0%, #8b5cf6 100%);
+    display: flex; align-items: center; justify-content: center;
+    color: #fff; font-weight: 900;
+  }
+  .nav-links { display: flex; gap: 28px; }
+  .nav-links a { color: rgba(255,255,255,0.75); text-decoration: none; font-size: 14px; font-weight: 500; transition: color 0.2s; }
+  .nav-links a:hover { color: #fff; }
+
+  /* HERO */
+  .hero {
+    background: linear-gradient(135deg, #0b122d 0%, #1a1f5c 50%, #2d1b6b 100%);
+    color: #fff;
+    padding: 100px 0 120px;
+    position: relative;
+    overflow: hidden;
+  }
+  .hero::before {
+    content: '';
+    position: absolute; top: 0; right: 0;
+    width: 600px; height: 600px;
+    background: radial-gradient(circle, rgba(139,92,246,0.3) 0%, transparent 70%);
+    border-radius: 50%;
+  }
+  .hero::after {
+    content: '';
+    position: absolute; bottom: -100px; left: -100px;
+    width: 500px; height: 500px;
+    background: radial-gradient(circle, rgba(99,102,241,0.25) 0%, transparent 70%);
+    border-radius: 50%;
+  }
+  .hero .container { position: relative; z-index: 2; }
+  .badge {
+    display: inline-block;
+    background: rgba(139,92,246,0.15);
+    border: 1px solid rgba(139,92,246,0.4);
+    color: #c4b5fd;
+    padding: 6px 14px;
+    border-radius: 100px;
+    font-size: 13px;
+    font-weight: 600;
+    letter-spacing: 0.02em;
+    margin-bottom: 24px;
+  }
+  h1 {
+    font-size: 64px;
+    line-height: 1.05;
+    letter-spacing: -0.03em;
+    font-weight: 800;
+    margin-bottom: 24px;
+    max-width: 900px;
+  }
+  h1 .gradient {
+    background: linear-gradient(90deg, #a78bfa 0%, #60a5fa 100%);
+    -webkit-background-clip: text;
+    -webkit-text-fill-color: transparent;
+    background-clip: text;
+  }
+  .hero p.lead {
+    font-size: 20px;
+    color: rgba(255,255,255,0.75);
+    max-width: 720px;
+    margin-bottom: 40px;
+    font-weight: 400;
+  }
+  .cta-row { display: flex; gap: 16px; flex-wrap: wrap; }
+  .btn {
+    display: inline-block;
+    padding: 14px 28px;
+    border-radius: 8px;
+    font-weight: 600;
+    font-size: 15px;
+    text-decoration: none;
+    transition: transform 0.15s, box-shadow 0.15s;
+    cursor: pointer;
+    border: none;
+  }
+  .btn-primary {
+    background: linear-gradient(135deg, #6366f1 0%, #8b5cf6 100%);
+    color: #fff;
+    box-shadow: 0 4px 20px rgba(99,102,241,0.4);
+  }
+  .btn-primary:hover { transform: translateY(-2px); box-shadow: 0 8px 30px rgba(99,102,241,0.5); }
+  .btn-ghost {
+    background: rgba(255,255,255,0.08);
+    color: #fff;
+    border: 1px solid rgba(255,255,255,0.2);
+  }
+  .btn-ghost:hover { background: rgba(255,255,255,0.15); }
+
+  .hero-stats {
+    display: grid;
+    grid-template-columns: repeat(4, 1fr);
+    gap: 24px;
+    margin-top: 80px;
+    padding-top: 40px;
+    border-top: 1px solid rgba(255,255,255,0.1);
+  }
+  .stat-num {
+    font-size: 40px;
+    font-weight: 800;
+    background: linear-gradient(90deg, #a78bfa 0%, #60a5fa 100%);
+    -webkit-background-clip: text;
+    -webkit-text-fill-color: transparent;
+    background-clip: text;
+    letter-spacing: -0.02em;
+  }
+  .stat-label { color: rgba(255,255,255,0.6); font-size: 13px; margin-top: 4px; }
+
+  /* SECTIONS */
+  section { padding: 100px 0; }
+  section.alt { background: #f8fafc; }
+  .section-eyebrow {
+    color: #6366f1;
+    font-size: 13px;
+    font-weight: 700;
+    letter-spacing: 0.1em;
+    text-transform: uppercase;
+    margin-bottom: 16px;
+  }
+  h2 {
+    font-size: 44px;
+    line-height: 1.1;
+    letter-spacing: -0.025em;
+    font-weight: 800;
+    margin-bottom: 20px;
+    max-width: 800px;
+  }
+  h3 { font-size: 22px; font-weight: 700; margin-bottom: 12px; letter-spacing: -0.01em; }
+  p.section-lead {
+    font-size: 19px;
+    color: #4b5563;
+    max-width: 720px;
+    margin-bottom: 60px;
+  }
+
+  /* PROBLEM */
+  .problem-grid {
+    display: grid;
+    grid-template-columns: repeat(3, 1fr);
+    gap: 24px;
+  }
+  .problem-card {
+    background: #fff;
+    padding: 32px;
+    border-radius: 16px;
+    border: 1px solid #e5e7eb;
+    transition: transform 0.2s, box-shadow 0.2s;
+  }
+  .problem-card:hover { transform: translateY(-4px); box-shadow: 0 20px 40px rgba(0,0,0,0.06); }
+  .problem-icon {
+    width: 48px; height: 48px;
+    background: linear-gradient(135deg, #fee2e2 0%, #fecaca 100%);
+    border-radius: 12px;
+    display: flex; align-items: center; justify-content: center;
+    font-size: 24px;
+    margin-bottom: 20px;
+  }
+
+  /* FEATURES */
+  .features-grid {
+    display: grid;
+    grid-template-columns: repeat(3, 1fr);
+    gap: 24px;
+  }
+  .feature-card {
+    background: #fff;
+    padding: 28px;
+    border-radius: 14px;
+    border: 1px solid #e5e7eb;
+    transition: all 0.2s;
+  }
+  .feature-card:hover {
+    border-color: #6366f1;
+    box-shadow: 0 10px 30px rgba(99,102,241,0.1);
+  }
+  .feature-icon {
+    width: 44px; height: 44px;
+    background: linear-gradient(135deg, #eef2ff 0%, #ede9fe 100%);
+    border-radius: 10px;
+    display: flex; align-items: center; justify-content: center;
+    font-size: 22px;
+    margin-bottom: 16px;
+  }
+  .feature-card h3 { font-size: 17px; margin-bottom: 8px; }
+  .feature-card p { font-size: 14px; color: #6b7280; line-height: 1.55; }
+  .feature-card .tag {
+    display: inline-block;
+    font-size: 11px;
+    font-weight: 700;
+    color: #7c3aed;
+    background: #ede9fe;
+    padding: 3px 8px;
+    border-radius: 4px;
+    margin-top: 12px;
+    letter-spacing: 0.03em;
+  }
+
+  /* HOW IT WORKS */
+  .steps {
+    display: grid;
+    grid-template-columns: repeat(5, 1fr);
+    gap: 20px;
+    position: relative;
+  }
+  .step {
+    text-align: center;
+    position: relative;
+  }
+  .step-num {
+    width: 56px; height: 56px;
+    background: linear-gradient(135deg, #6366f1 0%, #8b5cf6 100%);
+    color: #fff;
+    border-radius: 50%;
+    display: flex; align-items: center; justify-content: center;
+    font-weight: 800;
+    font-size: 20px;
+    margin: 0 auto 20px;
+    box-shadow: 0 8px 20px rgba(99,102,241,0.3);
+  }
+  .step h3 { font-size: 16px; margin-bottom: 8px; }
+  .step p { font-size: 13px; color: #6b7280; }
+
+  /* SCORE */
+  .score-box {
+    background: linear-gradient(135deg, #0b122d 0%, #1e1b4b 100%);
+    color: #fff;
+    padding: 60px;
+    border-radius: 24px;
+    margin-top: 40px;
+    position: relative;
+    overflow: hidden;
+  }
+  .score-box::before {
+    content: '';
+    position: absolute; top: -50px; right: -50px;
+    width: 300px; height: 300px;
+    background: radial-gradient(circle, rgba(139,92,246,0.3) 0%, transparent 70%);
+    border-radius: 50%;
+  }
+  .formula {
+    background: rgba(0,0,0,0.4);
+    border: 1px solid rgba(255,255,255,0.1);
+    padding: 24px;
+    border-radius: 12px;
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 15px;
+    color: #a5b4fc;
+    margin: 24px 0 40px;
+    position: relative; z-index: 2;
+    overflow-x: auto;
+  }
+  .formula .accent { color: #f472b6; }
+  .formula .num { color: #fbbf24; }
+  .score-breakdown {
+    display: grid;
+    grid-template-columns: repeat(3, 1fr);
+    gap: 20px;
+    position: relative; z-index: 2;
+  }
+  .weight-card {
+    background: rgba(255,255,255,0.05);
+    border: 1px solid rgba(255,255,255,0.1);
+    padding: 24px;
+    border-radius: 12px;
+  }
+  .weight-pct {
+    font-size: 36px;
+    font-weight: 800;
+    background: linear-gradient(90deg, #a78bfa 0%, #60a5fa 100%);
+    -webkit-background-clip: text;
+    -webkit-text-fill-color: transparent;
+    background-clip: text;
+    margin-bottom: 8px;
+  }
+  .weight-card h4 { font-size: 15px; margin-bottom: 8px; color: #fff; }
+  .weight-card p { font-size: 13px; color: rgba(255,255,255,0.65); }
+
+  /* DEDUP */
+  .dedup-flow {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 60px;
+    align-items: center;
+  }
+  .dedup-list li {
+    list-style: none;
+    padding: 16px 0 16px 40px;
+    position: relative;
+    border-bottom: 1px solid #e5e7eb;
+    font-size: 15px;
+    color: #374151;
+  }
+  .dedup-list li:last-child { border-bottom: none; }
+  .dedup-list li::before {
+    content: '';
+    position: absolute; left: 0; top: 22px;
+    width: 24px; height: 24px;
+    background: linear-gradient(135deg, #10b981 0%, #059669 100%);
+    border-radius: 50%;
+  }
+  .dedup-list li::after {
+    content: '✓';
+    position: absolute; left: 6px; top: 19px;
+    color: #fff; font-size: 13px; font-weight: 700;
+  }
+  .dedup-list strong { color: #111827; }
+  .hash-visual {
+    background: #0b122d;
+    padding: 32px;
+    border-radius: 16px;
+    color: #fff;
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 13px;
+  }
+  .hash-visual .row { padding: 8px 0; border-bottom: 1px solid rgba(255,255,255,0.08); }
+  .hash-visual .row:last-child { border-bottom: none; }
+  .hash-visual .label { color: #64748b; font-size: 11px; text-transform: uppercase; letter-spacing: 0.05em; }
+  .hash-visual .value { color: #a5b4fc; word-break: break-all; }
+  .hash-visual .status { color: #34d399; font-weight: 600; }
+
+  /* BROWSER MOCK */
+  .browser-mock {
+    background: #fff;
+    border-radius: 16px;
+    box-shadow: 0 30px 60px rgba(0,0,0,0.15);
+    overflow: hidden;
+    border: 1px solid #e5e7eb;
+    margin-bottom: 40px;
+  }
+  .browser-bar {
+    background: #f3f4f6;
+    padding: 12px 16px;
+    display: flex; align-items: center; gap: 12px;
+    border-bottom: 1px solid #e5e7eb;
+  }
+  .browser-dots { display: flex; gap: 6px; }
+  .browser-dot { width: 12px; height: 12px; border-radius: 50%; }
+  .browser-dot.r { background: #ef4444; }
+  .browser-dot.y { background: #f59e0b; }
+  .browser-dot.g { background: #10b981; }
+  .browser-url {
+    flex: 1;
+    background: #fff;
+    padding: 6px 12px;
+    border-radius: 6px;
+    font-size: 12px;
+    color: #6b7280;
+    font-family: 'JetBrains Mono', monospace;
+  }
+  .browser-body { padding: 40px; background: #fafbfc; }
+
+  /* Upload mock */
+  .upload-mock {
+    border: 2px dashed #c7d2fe;
+    background: linear-gradient(135deg, #eef2ff 0%, #f5f3ff 100%);
+    border-radius: 16px;
+    padding: 60px;
+    text-align: center;
+  }
+  .upload-icon {
+    width: 64px; height: 64px;
+    background: linear-gradient(135deg, #6366f1 0%, #8b5cf6 100%);
+    border-radius: 16px;
+    margin: 0 auto 20px;
+    display: flex; align-items: center; justify-content: center;
+    color: #fff; font-size: 28px;
+  }
+  .upload-mock h4 { font-size: 20px; margin-bottom: 8px; color: #1a1f36; }
+  .upload-mock p { color: #6b7280; margin-bottom: 24px; }
+  .mode-toggle {
+    display: inline-flex;
+    background: #fff;
+    border-radius: 10px;
+    padding: 4px;
+    box-shadow: 0 4px 12px rgba(0,0,0,0.06);
+    margin-top: 20px;
+  }
+  .mode-opt { padding: 10px 20px; border-radius: 7px; font-size: 14px; font-weight: 600; color: #6b7280; }
+  .mode-opt.on { background: linear-gradient(135deg, #6366f1 0%, #8b5cf6 100%); color: #fff; }
+
+  /* Review mock */
+  .review-mock { display: grid; grid-template-columns: 240px 1fr; gap: 24px; }
+  .review-sidebar { background: #fff; border-radius: 12px; padding: 20px; border: 1px solid #e5e7eb; }
+  .side-item {
+    padding: 10px 12px;
+    border-radius: 8px;
+    font-size: 13px;
+    font-weight: 600;
+    color: #4b5563;
+    margin-bottom: 4px;
+    display: flex; justify-content: space-between; align-items: center;
+  }
+  .side-item.active { background: #eef2ff; color: #4338ca; }
+  .side-item .pill { background: #10b981; color: #fff; font-size: 10px; padding: 2px 6px; border-radius: 4px; }
+  .review-main { background: #fff; border-radius: 12px; padding: 24px; border: 1px solid #e5e7eb; }
+  .review-header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 20px; padding-bottom: 20px; border-bottom: 1px solid #e5e7eb; }
+  .table-name { font-size: 18px; font-weight: 700; }
+  .conf-badge { background: linear-gradient(135deg, #dcfce7 0%, #bbf7d0 100%); color: #166534; padding: 6px 12px; border-radius: 100px; font-size: 12px; font-weight: 700; }
+  table.schema { width: 100%; border-collapse: collapse; font-size: 13px; }
+  table.schema th { text-align: left; padding: 10px; color: #6b7280; font-weight: 600; font-size: 11px; text-transform: uppercase; letter-spacing: 0.05em; border-bottom: 1px solid #e5e7eb; }
+  table.schema td { padding: 12px 10px; border-bottom: 1px solid #f3f4f6; }
+  .type-tag { display: inline-block; padding: 3px 8px; border-radius: 4px; font-size: 11px; font-weight: 700; font-family: 'JetBrains Mono', monospace; }
+  .type-varchar { background: #dbeafe; color: #1e40af; }
+  .type-number { background: #fef3c7; color: #92400e; }
+  .type-date { background: #fce7f3; color: #9f1239; }
+  .type-boolean { background: #dcfce7; color: #166534; }
+  .drift-banner {
+    background: linear-gradient(135deg, #fef3c7 0%, #fde68a 100%);
+    border-left: 4px solid #f59e0b;
+    padding: 14px 18px;
+    border-radius: 8px;
+    margin-bottom: 20px;
+    font-size: 13px;
+    color: #78350f;
+    display: flex; align-items: center; gap: 12px;
+  }
+
+  /* TECH */
+  .tech-grid {
+    display: grid;
+    grid-template-columns: repeat(5, 1fr);
+    gap: 20px;
+    margin-top: 40px;
+  }
+  .tech-card {
+    background: #fff;
+    padding: 28px 20px;
+    border-radius: 14px;
+    text-align: center;
+    border: 1px solid #e5e7eb;
+    transition: all 0.2s;
+  }
+  .tech-card:hover { border-color: #6366f1; transform: translateY(-3px); }
+  .tech-logo {
+    width: 48px; height: 48px;
+    margin: 0 auto 12px;
+    background: linear-gradient(135deg, #eef2ff 0%, #ede9fe 100%);
+    border-radius: 12px;
+    display: flex; align-items: center; justify-content: center;
+    font-size: 22px;
+    font-weight: 800;
+    color: #6366f1;
+  }
+  .tech-card h4 { font-size: 14px; margin-bottom: 4px; }
+  .tech-card p { font-size: 12px; color: #6b7280; }
+
+  /* CTA */
+  .cta {
+    background: linear-gradient(135deg, #0b122d 0%, #1e1b4b 50%, #4c1d95 100%);
+    color: #fff;
+    text-align: center;
+    padding: 100px 0;
+    position: relative;
+    overflow: hidden;
+  }
+  .cta::before {
+    content: '';
+    position: absolute; top: 50%; left: 50%;
+    transform: translate(-50%, -50%);
+    width: 800px; height: 800px;
+    background: radial-gradient(circle, rgba(139,92,246,0.2) 0%, transparent 60%);
+    border-radius: 50%;
+  }
+  .cta .container { position: relative; z-index: 2; }
+  .cta h2 { color: #fff; margin: 0 auto 20px; text-align: center; font-size: 52px; }
+  .cta p { font-size: 20px; color: rgba(255,255,255,0.75); max-width: 640px; margin: 0 auto 40px; }
+
+  /* FOOTER */
+  footer {
+    background: #060916;
+    color: rgba(255,255,255,0.6);
+    padding: 40px 0;
+    text-align: center;
+    font-size: 14px;
+  }
+  footer .logo { justify-content: center; margin-bottom: 12px; }
+
+  @media (max-width: 900px) {
+    h1 { font-size: 42px; }
+    h2 { font-size: 32px; }
+    .hero-stats, .problem-grid, .features-grid, .steps, .tech-grid, .score-breakdown, .dedup-flow, .review-mock { grid-template-columns: 1fr; }
+    .nav-links { display: none; }
+    section { padding: 60px 0; }
+    .score-box { padding: 32px; }
+  }
+
+  @media print {
+    nav { position: static; }
+    * { -webkit-print-color-adjust: exact; print-color-adjust: exact; }
+  }
+</style>
+</head>
+<body>
+
+<nav>
+  <div class="container">
+    <div class="logo">
+      <div class="logo-mark">FC</div>
+      Finance Connect
+    </div>
+    <div class="nav-links">
+      <a href="#problem">Problem</a>
+      <a href="#features">Features</a>
+      <a href="#how">How It Works</a>
+      <a href="#score">Scoring</a>
+      <a href="#tech">Tech Stack</a>
+    </div>
+  </div>
+</nav>
+
+<section class="hero">
+  <div class="container">
+    <div class="badge">POC · AI-POWERED SCHEMA INFERENCE</div>
+    <h1>From <span class="gradient">Excel chaos</span> to governed <span class="gradient">Snowflake data</span> — with humans in the loop.</h1>
+    <p class="lead">Finance Connect turns ungoverned EUC spreadsheets into audited, versioned, production-ready Snowflake tables. AI infers the schema. Humans approve it. Snowflake stores it.</p>
+    <div class="cta-row">
+      <a href="#how" class="btn btn-primary">See how it works</a>
+      <a href="#features" class="btn btn-ghost">Explore features</a>
+    </div>
+    <div class="hero-stats">
+      <div>
+        <div class="stat-num">100s</div>
+        <div class="stat-label">EUCs per bank</div>
+      </div>
+      <div>
+        <div class="stat-num">&lt;60s</div>
+        <div class="stat-label">Upload to schema</div>
+      </div>
+      <div>
+        <div class="stat-num">2</div>
+        <div class="stat-label">Inference modes</div>
+      </div>
+      <div>
+        <div class="stat-num">0</div>
+        <div class="stat-label">Duplicate rows on re-upload</div>
+      </div>
+    </div>
+  </div>
+</section>
+
+<section id="problem">
+  <div class="container">
+    <div class="section-eyebrow">The Problem</div>
+    <h2>Banks run on Excel. Auditors don't.</h2>
+    <p class="section-lead">Every financial institution has hundreds of critical spreadsheets — risk models, credit registers, trade exposure logs — living outside the enterprise data platform. Ungoverned. Undocumented. Untraceable.</p>
+    <div class="problem-grid">
+      <div class="problem-card">
+        <div class="problem-icon">📊</div>
+        <h3>Ungoverned data</h3>
+        <p>Business-critical calculations sit in Excel files on shared drives. No lineage, no audit trail, no single source of truth.</p>
+      </div>
+      <div class="problem-card">
+        <div class="problem-icon">⏱️</div>
+        <h3>Manual migration is slow</h3>
+        <p>Onboarding one EUC into Snowflake takes days — analysts reverse-engineer schemas, guess data types, and hand-write DDL.</p>
+      </div>
+      <div class="problem-card">
+        <div class="problem-icon">🔍</div>
+        <h3>Regulators want visibility</h3>
+        <p>BCBS 239, SR 11-7, model risk management — all demand governed, versioned, reviewable data pipelines. Excel doesn't cut it.</p>
+      </div>
+    </div>
+  </div>
+</section>
+
+<section id="solution" class="alt">
+  <div class="container">
+    <div class="section-eyebrow">The Solution</div>
+    <h2>An AI-assisted pipeline from workbook to warehouse.</h2>
+    <p class="section-lead">Drag an Excel file in. Claude (or a deterministic local heuristic) reads every sheet, infers table structure, column names, data types, and semantics. A reviewer approves — or edits — the schema. One click executes the DDL and upserts the data into Snowflake.</p>
+
+    <div class="browser-mock">
+      <div class="browser-bar">
+        <div class="browser-dots">
+          <div class="browser-dot r"></div>
+          <div class="browser-dot y"></div>
+          <div class="browser-dot g"></div>
+        </div>
+        <div class="browser-url">finance-connect.local/upload</div>
+      </div>
+      <div class="browser-body">
+        <div class="upload-mock">
+          <div class="upload-icon">↑</div>
+          <h4>Drop your Excel workbook here</h4>
+          <p>.xlsx up to 10 MB — trade logs, risk registers, credit exposure sheets</p>
+          <div class="mode-toggle">
+            <div class="mode-opt on">✦ Claude AI</div>
+            <div class="mode-opt">⬡ Local (No AI)</div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+</section>
+
+<section id="features">
+  <div class="container">
+    <div class="section-eyebrow">Feature Set</div>
+    <h2>Everything you need to onboard an EUC — and prove it.</h2>
+    <p class="section-lead">Built for reviewers, auditors, and data engineers. Every step is inspectable, editable, and reversible.</p>
+    <div class="features-grid">
+      <div class="feature-card">
+        <div class="feature-icon">📤</div>
+        <h3>Drag-and-drop upload</h3>
+        <p>Native browser upload for .xlsx files up to 10 MB. Parsed server-side with ExcelJS — no third-party cloud storage.</p>
+      </div>
+      <div class="feature-card">
+        <div class="feature-icon">🔀</div>
+        <h3>Dual inference mode</h3>
+        <p>Toggle between Claude AI (rich semantic inference with descriptions) and Local heuristic (instant, no API call, fully deterministic). Persists per user session.</p>
+        <span class="tag">UI TOGGLE — NO CODE CHANGE</span>
+      </div>
+      <div class="feature-card">
+        <div class="feature-icon">🧠</div>
+        <h3>AI schema inference</h3>
+        <p>Table names, column names, data types (VARCHAR / NUMBER / INTEGER / FLOAT / DATE / TIMESTAMP / BOOLEAN), table classification (TRANSACTIONAL, LOOKUP, SUMMARY, CROSSTAB), and human-readable descriptions.</p>
+      </div>
+      <div class="feature-card">
+        <div class="feature-icon">📈</div>
+        <h3>Schema Readiness Score</h3>
+        <p>Composite confidence score computed before the reviewer opens the schema. Instantly know whether to skim or scrutinise.</p>
+        <span class="tag">SIGNATURE METRIC</span>
+      </div>
+      <div class="feature-card">
+        <div class="feature-icon">✏️</div>
+        <h3>Inline schema editing</h3>
+        <p>Rename columns, change data types, update descriptions, delete columns or entire tables — all in the browser, zero DDL written by hand.</p>
+      </div>
+      <div class="feature-card">
+        <div class="feature-icon">👁️</div>
+        <h3>Source data preview</h3>
+        <p>See the actual Excel rows side-by-side with the inferred schema before approving. No blind sign-offs.</p>
+      </div>
+      <div class="feature-card">
+        <div class="feature-icon">🔐</div>
+        <h3>EUC deduplication</h3>
+        <p>Every upload is MD5-hashed. Re-uploads of the same file are detected instantly and routed to the previously approved schema — no redundant AI calls.</p>
+        <span class="tag">SIGNATURE FEATURE</span>
+      </div>
+      <div class="feature-card">
+        <div class="feature-icon">📊</div>
+        <h3>Schema diff</h3>
+        <p>Amber drift banner highlights added, dropped, or type-changed columns against the last approved schema. Reviewers see exactly what changed.</p>
+      </div>
+      <div class="feature-card">
+        <div class="feature-icon">📝</div>
+        <h3>SQL DDL preview</h3>
+        <p>Read the exact CREATE OR REPLACE TABLE statements before they execute. Nothing runs without human sign-off.</p>
+      </div>
+      <div class="feature-card">
+        <div class="feature-icon">⚡</div>
+        <h3>One-click approve &amp; execute</h3>
+        <p>Approve the schema and the DDL runs against Snowflake immediately. Tables created, data upserted, audit event written.</p>
+      </div>
+      <div class="feature-card">
+        <div class="feature-icon">🔁</div>
+        <h3>MERGE-based upsert</h3>
+        <p>Re-uploads never create duplicate rows. Existing rows update, new rows insert — via native Snowflake MERGE INTO. Handles dirty data via TRY_CAST.</p>
+      </div>
+      <div class="feature-card">
+        <div class="feature-icon">📜</div>
+        <h3>Full audit trail</h3>
+        <p>Every action — upload, analysis, approval, execution — is timestamped on the result timeline. Complete lineage from file to table.</p>
+      </div>
+      <div class="feature-card">
+        <div class="feature-icon">🏷️</div>
+        <h3>SNOWFLAKE / DEMO badges</h3>
+        <p>Every result page shows whether data landed in real Snowflake or was simulated. No environment confusion.</p>
+      </div>
+      <div class="feature-card">
+        <div class="feature-icon">⚠️</div>
+        <h3>Pre-approve validation</h3>
+        <p>Invalid identifiers and duplicate column names are caught and surfaced with exact error messages before any DDL runs.</p>
+      </div>
+      <div class="feature-card">
+        <div class="feature-icon">🏭</div>
+        <h3>Warehouse auto-detection</h3>
+        <p>If the configured Snowflake warehouse isn't available, Finance Connect queries SHOW WAREHOUSES and selects a valid one automatically.</p>
+      </div>
+    </div>
+  </div>
+</section>
+
+<section id="how" class="alt">
+  <div class="container">
+    <div class="section-eyebrow">How It Works</div>
+    <h2>Five steps. Fully auditable.</h2>
+    <p class="section-lead">A predictable pipeline from raw workbook to governed table — with a human decision point in the middle.</p>
+    <div class="steps">
+      <div class="step">
+        <div class="step-num">1</div>
+        <h3>Upload</h3>
+        <p>Drop the .xlsx. File is MD5-hashed and staged server-side.</p>
+      </div>
+      <div class="step">
+        <div class="step-num">2</div>
+        <h3>Infer</h3>
+        <p>Claude AI or local heuristic reads every sheet and proposes a schema.</p>
+      </div>
+      <div class="step">
+        <div class="step-num">3</div>
+        <h3>Review</h3>
+        <p>Reviewer inspects the readiness score, previews source data, edits inline.</p>
+      </div>
+      <div class="step">
+        <div class="step-num">4</div>
+        <h3>Approve</h3>
+        <p>DDL preview shown. Validation errors surfaced. One-click execute.</p>
+      </div>
+      <div class="step">
+        <div class="step-num">5</div>
+        <h3>Land</h3>
+        <p>Snowflake MERGE upsert. Audit trail written. Table live.</p>
+      </div>
+    </div>
+
+    <div class="browser-mock" style="margin-top: 80px;">
+      <div class="browser-bar">
+        <div class="browser-dots">
+          <div class="browser-dot r"></div>
+          <div class="browser-dot y"></div>
+          <div class="browser-dot g"></div>
+        </div>
+        <div class="browser-url">finance-connect.local/jobs/j-8f4c2a/review</div>
+      </div>
+      <div class="browser-body">
+        <div class="review-mock">
+          <div class="review-sidebar">
+            <div style="font-size: 11px; text-transform: uppercase; color: #9ca3af; font-weight: 700; margin-bottom: 12px; letter-spacing: 0.05em;">Tables Detected</div>
+            <div class="side-item active">CREDIT_EXPOSURE_REGISTER <span class="pill">96%</span></div>
+            <div class="side-item">RATING_MIGRATION_MATRIX <span class="pill">91%</span></div>
+            <div class="side-item">SECTOR_CONCENTRATION <span class="pill">88%</span></div>
+            <div class="side-item">COUNTERPARTY_MASTER <span class="pill">94%</span></div>
+            <div class="side-item">RISK_MODEL_PARAMETERS <span class="pill">93%</span></div>
+          </div>
+          <div class="review-main">
+            <div class="drift-banner">
+              <span style="font-size: 18px;">⚠️</span>
+              <div><strong>Schema drift detected:</strong> 2 new columns added since last approved version. Review changes below.</div>
+            </div>
+            <div class="review-header">
+              <div>
+                <div class="table-name">CREDIT_EXPOSURE_REGISTER</div>
+                <div style="font-size: 12px; color: #6b7280; margin-top: 4px;">TRANSACTIONAL · 100 rows · Sheet: "Credit Exposure Register"</div>
+              </div>
+              <div class="conf-badge">96% READINESS</div>
+            </div>
+            <table class="schema">
+              <thead>
+                <tr>
+                  <th>Column</th>
+                  <th>Type</th>
+                  <th>Confidence</th>
+                  <th>Description</th>
+                </tr>
+              </thead>
+              <tbody>
+                <tr>
+                  <td><strong>EXPOSURE_ID</strong> 🔑</td>
+                  <td><span class="type-tag type-varchar">VARCHAR</span></td>
+                  <td>99%</td>
+                  <td>Primary key — unique exposure identifier</td>
+                </tr>
+                <tr>
+                  <td><strong>COUNTERPARTY_ID</strong></td>
+                  <td><span class="type-tag type-varchar">VARCHAR</span></td>
+                  <td>97%</td>
+                  <td>Reference to counterparty master</td>
+                </tr>
+                <tr>
+                  <td><strong>EAD_USD</strong></td>
+                  <td><span class="type-tag type-number">NUMBER</span></td>
+                  <td>95%</td>
+                  <td>Exposure at default in USD</td>
+                </tr>
+                <tr>
+                  <td><strong>TRADE_DATE</strong></td>
+                  <td><span class="type-tag type-date">DATE</span></td>
+                  <td>94%</td>
+                  <td>Date the trade was originated</td>
+                </tr>
+                <tr>
+                  <td><strong>PD</strong></td>
+                  <td><span class="type-tag type-number">NUMBER</span></td>
+                  <td>92%</td>
+                  <td>Probability of default</td>
+                </tr>
+              </tbody>
+            </table>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+</section>
+
+<section id="score">
+  <div class="container">
+    <div class="section-eyebrow">The Signature Metric</div>
+    <h2>Schema Readiness Score — one number to trust.</h2>
+    <p class="section-lead">Every inferred schema gets a composite readiness score before a human sees it. Reviewers know instantly whether to skim or scrutinise.</p>
+
+    <div class="score-box">
+      <div style="font-size: 13px; color: #a5b4fc; font-weight: 700; letter-spacing: 0.1em; text-transform: uppercase; position: relative; z-index: 2;">The Formula</div>
+      <div class="formula">
+schemaReadinessScore = (<span class="accent">avgTableConfidence</span> &times; <span class="num">0.5</span>) + (<span class="accent">avgSheetConfidence</span> &times; <span class="num">0.3</span>) + ((<span class="num">1</span> &minus; <span class="accent">lowConfidenceRatio</span>) &times; <span class="num">0.2</span>)
+      </div>
+
+      <div class="score-breakdown">
+        <div class="weight-card">
+          <div class="weight-pct">50%</div>
+          <h4>avgTableConfidence</h4>
+          <p>Average AI confidence across all inferred tables — the model's own certainty about the schema it proposed.</p>
+        </div>
+        <div class="weight-card">
+          <div class="weight-pct">30%</div>
+          <h4>avgSheetConfidence</h4>
+          <p>Average region-detection confidence across sheets — did the parser cleanly identify header and data boundaries?</p>
+        </div>
+        <div class="weight-card">
+          <div class="weight-pct">20%</div>
+          <h4>1 &minus; lowConfidenceRatio</h4>
+          <p>Fraction of columns above 80% confidence — penalises schemas with too many ambiguous or low-signal fields.</p>
+        </div>
+      </div>
+
+      <div style="margin-top: 40px; padding-top: 32px; border-top: 1px solid rgba(255,255,255,0.1); position: relative; z-index: 2;">
+        <div style="font-size: 13px; color: #a5b4fc; font-weight: 700; letter-spacing: 0.1em; text-transform: uppercase; margin-bottom: 16px;">Per-column confidence factors</div>
+        <div style="display: grid; grid-template-columns: repeat(4, 1fr); gap: 20px;">
+          <div><strong style="color: #fff;">Header clarity</strong><br><span style="color: rgba(255,255,255,0.6); font-size: 13px;">Is the column label unambiguous and descriptive?</span></div>
+          <div><strong style="color: #fff;">Value consistency</strong><br><span style="color: rgba(255,255,255,0.6); font-size: 13px;">Do the sampled values follow a single pattern?</span></div>
+          <div><strong style="color: #fff;">Type match rate</strong><br><span style="color: rgba(255,255,255,0.6); font-size: 13px;">What % of values conform to the inferred type?</span></div>
+          <div><strong style="color: #fff;">Population ratio</strong><br><span style="color: rgba(255,255,255,0.6); font-size: 13px;">How often is the column populated vs. blank?</span></div>
+        </div>
+      </div>
+    </div>
+  </div>
+</section>
+
+<section class="alt">
+  <div class="container">
+    <div class="section-eyebrow">Determinism &amp; Consistency</div>
+    <h2>Same file in, same answer out — always.</h2>
+    <p class="section-lead">AI is powerful but non-deterministic. Finance Connect wraps Claude in a hash-guarded workflow so that identical uploads produce identical, human-approved results every time.</p>
+
+    <div class="dedup-flow">
+      <div>
+        <ul class="dedup-list">
+          <li>Every uploaded file is <strong>MD5-hashed server-side</strong> the moment it arrives — before any analysis.</li>
+          <li>On re-upload, the hash lookup finds the previous job — <strong>no new AI inference call is made</strong> for the same binary file.</li>
+          <li>The previous <strong>approved schema</strong> (human-reviewed and signed off) is loaded as the stable reference.</li>
+          <li>Schema diff runs against that approved version so <strong>human edits are always preserved</strong> across re-uploads.</li>
+          <li>In <strong>Local (heuristic) mode</strong>, inference is fully deterministic by design — same file = byte-for-byte identical output.</li>
+          <li>In <strong>Claude AI mode</strong>, the hash guard means Claude is called <strong>once per unique file version</strong>, ever.</li>
+        </ul>
+      </div>
+      <div class="hash-visual">
+        <div class="row">
+          <div class="label">Filename</div>
+          <div class="value" style="color:#fff">Level3_Credit_Risk_EUC.xlsx</div>
+        </div>
+        <div class="row">
+          <div class="label">MD5 Hash</div>
+          <div class="value">a3f8e2c1d4b7f6e9a2c5b8d1e4f7a0c3</div>
+        </div>
+        <div class="row">
+          <div class="label">Lookup Result</div>
+          <div class="value status">✓ MATCH — job 69c81512 (approved 2026-09-15)</div>
+        </div>
+        <div class="row">
+          <div class="label">AI Call Made?</div>
+          <div class="value status">NO — reusing approved schema</div>
+        </div>
+        <div class="row">
+          <div class="label">Diff vs Approved</div>
+          <div class="value" style="color:#fbbf24">No changes detected</div>
+        </div>
+        <div class="row">
+          <div class="label">Action</div>
+          <div class="value status">→ Blue banner shown, redirecting to review</div>
+        </div>
+      </div>
+    </div>
+  </div>
+</section>
+
+<section id="tech">
+  <div class="container">
+    <div class="section-eyebrow">Under the Hood</div>
+    <h2>Modern, auditable, and production-ready.</h2>
+    <p class="section-lead">Every component is a proven, well-supported piece of the stack — nothing exotic, everything replaceable.</p>
+    <div class="tech-grid">
+      <div class="tech-card">
+        <div class="tech-logo">N</div>
+        <h4>Next.js 14</h4>
+        <p>App Router · TypeScript · Server Actions</p>
+      </div>
+      <div class="tech-card">
+        <div class="tech-logo">C</div>
+        <h4>Claude API</h4>
+        <p>claude-sonnet-4-6 · prompt caching</p>
+      </div>
+      <div class="tech-card">
+        <div class="tech-logo">X</div>
+        <h4>ExcelJS</h4>
+        <p>Workbook parsing · cell-level analysis</p>
+      </div>
+      <div class="tech-card">
+        <div class="tech-logo">S</div>
+        <h4>Snowflake SDK</h4>
+        <p>Node.js v3 driver · MERGE INTO</p>
+      </div>
+      <div class="tech-card">
+        <div class="tech-logo">R</div>
+        <h4>Upstash Redis</h4>
+        <p>Job store · hash index · in-mem fallback</p>
+      </div>
+    </div>
+  </div>
+</section>
+
+<section class="cta">
+  <div class="container">
+    <h2>Ready to see it on your data?</h2>
+    <p>Bring one of your own EUC workbooks. In under a minute you'll have an AI-inferred schema, a readiness score, and a live Snowflake table ready for governance.</p>
+    <div class="cta-row" style="justify-content: center;">
+      <a href="#" class="btn btn-primary">Book a live walkthrough</a>
+      <a href="#" class="btn btn-ghost">Request the technical brief</a>
+    </div>
+  </div>
+</section>
+
+<footer>
+  <div class="container">
+    <div class="logo">
+      <div class="logo-mark">FC</div>
+      Finance Connect PoC
+    </div>
+    <div>Finance Connect PoC — Built with Claude AI + Snowflake</div>
+    <div style="margin-top: 8px; font-size: 12px; color: rgba(255,255,255,0.4);">© 2026 · Proof of Concept</div>
+  </div>
+</footer>
+
+</body>
+</html>
