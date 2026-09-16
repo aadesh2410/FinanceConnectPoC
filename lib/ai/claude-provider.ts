@@ -269,21 +269,21 @@ Analyse every sheet and return a JSON array (one entry per sheet) describing the
       "startCol": "C",
       "endCol": "F",
       "sampleValues": ["2022", "2023", "2024", "2025"],
-      "dimensionType": one of:
-        "FISCAL_YEAR"    — 4-digit year values (2020, 2021…) — store as INTEGER
-        "CALENDAR_YEAR"  — calendar years distinct from fiscal year
-        "QUARTER"        — quarter values (Q1, Q2, Q1 FY25, 2024-Q3) — store as VARCHAR
-        "MONTH"          — month names or abbreviations (Jan, Feb… / January…) — store as VARCHAR
-        "YEAR_MONTH"     — combined year+month (2024-01, Jan-24) — store as VARCHAR
-        "SCENARIO"       — Actual/Budget/Forecast/Plan/Variance/Reforecast/Prior Year — store as VARCHAR
-        "REGION"         — bank regions: EMEA, APAC, Americas, NAMR, LATAM — store as VARCHAR
-        "CURRENCY"       — ISO currency codes (USD, EUR, GBP, JPY) as columns — store as VARCHAR
-        "RISK_TYPE"      — risk categories as columns (Market, Credit, Operational, Liquidity) — store as VARCHAR
-        "RATING_BUCKET"  — rating migration/transition matrix TO columns (AAA, AA, A, BBB…) — store as VARCHAR
-        "ASSET_CLASS"    — asset class codes as columns (Equities, Fixed Income, FX, Rates…)
-        "CATEGORY"       — any other repeating categorical dimension not covered above,
+      "semanticCategory": one of (this is the BUSINESS meaning, not a storage type):
+        "FISCAL_YEAR"    — 4-digit year values (2020, 2021…) — storage: INTEGER
+        "CALENDAR_YEAR"  — calendar years distinct from fiscal year — storage: INTEGER
+        "QUARTER"        — quarter values (Q1, Q2, Q1 FY25, 2024-Q3) — storage: VARCHAR
+        "MONTH"          — month names or abbreviations (Jan, Feb… / January…) — storage: VARCHAR
+        "YEAR_MONTH"     — combined year+month (2024-01, Jan-24) — storage: VARCHAR
+        "SCENARIO"       — Actual/Budget/Forecast/Plan/Variance/Reforecast/Prior Year — storage: VARCHAR
+        "REGION"         — bank regions: EMEA, APAC, Americas, NAMR, LATAM — storage: VARCHAR
+        "CURRENCY"       — ISO currency codes (USD, EUR, GBP, JPY) as columns — storage: VARCHAR
+        "RISK_TYPE"      — risk categories (Market, Credit, Operational, Liquidity) — storage: VARCHAR
+        "RATING_BUCKET"  — rating migration/transition matrix TO columns (AAA, AA…) — storage: VARCHAR
+        "ASSET_CLASS"    — asset class codes as columns (Equities, Fixed Income, FX, Rates…) — storage: VARCHAR
+        "CATEGORY"       — any other repeating categorical dimension not covered above — storage: VARCHAR,
       "suggestedColumnName": "e.g. FISCAL_YEAR, MONTH, SCENARIO, REGION — UPPER_SNAKE_CASE",
-      "dataType": "INTEGER (for years) | VARCHAR (for everything else)",
+      "storageType": "INTEGER (for years only) | VARCHAR (for everything else)",
       "splitIntoColumns": false,
       "splitColumns": ["FISCAL_YEAR", "QUARTER"]
     },
@@ -427,7 +427,7 @@ For pivot/CROSSTAB tables, add:
 "isPivot": true,
 "pivotConfig": {
   "dimensionColumnName": "FISCAL_YEAR",
-  "dimensionType": "INTEGER",
+  "dimensionType": "INTEGER",         // STORAGE TYPE ONLY — must be exactly "INTEGER" or "VARCHAR". Never a semantic name like "QUARTER" or "SCENARIO".
   "headerRow": 8,
   "hierarchySourceCols": ["A", "B"],
   "hierarchyColumnNames": ["DIVISION_CODE", "BUSINESS_UNIT"],
@@ -443,6 +443,11 @@ For pivot/CROSSTAB tables, add:
   "rowTypeColumnName": "SOURCE_ROW_TYPE",
   "isTotalColumnName": "IS_TOTAL_ROW"
 }
+
+CRITICAL: pivotConfig.dimensionType is a Snowflake STORAGE type — the ONLY allowed values are the literal strings "INTEGER" and "VARCHAR". Do NOT copy the Stage 0 semanticCategory (QUARTER, SCENARIO, RATING_BUCKET, etc.) here — those are business categories, not storage types. Map as follows:
+- Stage 0 semanticCategory FISCAL_YEAR or CALENDAR_YEAR → pivotConfig.dimensionType: "INTEGER"
+- Every other semanticCategory (QUARTER, MONTH, YEAR_MONTH, SCENARIO, REGION, CURRENCY, RISK_TYPE, RATING_BUCKET, ASSET_CLASS, CATEGORY) → pivotConfig.dimensionType: "VARCHAR"
+The business meaning belongs in dimensionColumnName (e.g. "QUARTER", "SCENARIO", "TO_RATING") — not in dimensionType.
 
 Rules for carryForwardHierarchyCols:
 - Set true for any hierarchy column where the value is stored in a MERGED CELL that spans multiple rows (e.g. a division label "FID" merged across all its sub-rows). ExcelJS only returns the value in the top-left cell of a merge; all other cells in the merge are blank. Carry-forward fills those blanks with the last seen non-empty value so every row gets the correct label.
@@ -556,7 +561,20 @@ export class ClaudeSchemaInferenceProvider implements SchemaInferenceProvider {
     if (!textBlock || textBlock.type !== 'text') throw new Error('Claude returned no text for schema inference')
 
     let raw = textBlock.text.trim().replace(/^```(?:json)?\s*/i, '').replace(/\s*```$/, '').trim()
-    const schema = WorkbookSchemaZod.parse(JSON.parse(raw)) as WorkbookSchema
+    const parsed = JSON.parse(raw)
+
+    // Defensive normalisation: pivotConfig.dimensionType must be INTEGER or VARCHAR.
+    // If Claude leaked a semantic category (QUARTER/SCENARIO/etc.) instead of the storage type, coerce it.
+    if (Array.isArray(parsed?.tables)) {
+      for (const t of parsed.tables) {
+        const dt = t?.pivotConfig?.dimensionType
+        if (dt && dt !== 'INTEGER' && dt !== 'VARCHAR') {
+          t.pivotConfig.dimensionType = (dt === 'FISCAL_YEAR' || dt === 'CALENDAR_YEAR' || dt === 'YEAR') ? 'INTEGER' : 'VARCHAR'
+        }
+      }
+    }
+
+    const schema = WorkbookSchemaZod.parse(parsed) as WorkbookSchema
 
     // ── Stage 3: Skill suggestions ────────────────────────────────────────────
     let suggestedSkills: SuggestedSkill[] = []
